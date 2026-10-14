@@ -1,8 +1,8 @@
 import os
 import json
+import subprocess
 import xml.etree.ElementTree as ET
 import requests
-from pytubefix import YouTube
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -33,7 +33,7 @@ if os.path.exists(TRACKER_FILE):
 else:
     uploaded_ids = set()
 
-print("Step 1: Feed se latest video details fetch ho rahi hain...")
+print("Step 1: Feed se latest video details check ho rahi hain...")
 feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={CHANNEL_ID}"
 headers = {"User-Agent": "Mozilla/5.0"}
 resp = requests.get(feed_url, headers=headers, timeout=20)
@@ -64,33 +64,61 @@ print(f"Target Video: {title}")
 print(f"Target URL: {target_url}")
 
 if latest_video_id in uploaded_ids:
-    print("Yeh video pehle hi upload ho chuki hai. No action needed.")
+    print("Yeh video pehle se uploaded hai! No action needed.")
     exit(0)
 
-local_video_file = "downloaded_track.mp4"
-if os.path.exists(local_video_file):
-    os.remove(local_video_file)
+# Files cleanup
+audio_file = "downloaded_audio.m4a"
+image_file = "thumbnail.jpg"
+output_video = "final_output.mp4"
 
-print("Step 2: pytubefix ke zariye direct stream download shuru...")
+for f in [audio_file, image_file, output_video]:
+    if os.path.exists(f):
+        os.remove(f)
 
-# pytubefix actively maintained YouTube downloader hai
-yt = YouTube(target_url, client='ANDROID')
-stream = yt.streams.get_highest_resolution()
+# Step 2: Download Thumbnail
+print("Step 2: High quality thumbnail download ho raha hai...")
+thumb_urls = [
+    f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg",
+    f"https://i.ytimg.com/vi/{latest_video_id}/hqdefault.jpg"
+]
+for t_url in thumb_urls:
+    t_resp = requests.get(t_url)
+    if t_resp.status_code == 200 and len(t_resp.content) > 5000:
+        with open(image_file, "wb") as f:
+            f.write(t_resp.content)
+        break
 
-if not stream:
-    stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+# Step 3: Download Clean Audio Stream
+print("Step 3: Direct Audio stream download ho rahi hai...")
+dl_cmd = [
+    "yt-dlp",
+    "--extractor-args", "youtube:player_client=android_music,mweb",
+    "-f", "ba/ba*",
+    "-o", audio_file,
+    target_url
+]
+subprocess.run(dl_cmd, check=True)
 
-if not stream:
-    print("Stream extract nahi ho saki.")
-    exit(1)
+# Step 4: Render to MP4 via FFmpeg
+print("Step 4: FFmpeg se audio aur thumbnail merge karke video banayi ja rahi hai...")
+ffmpeg_cmd = [
+    "ffmpeg", "-y",
+    "-loop", "1", "-i", image_file,
+    "-i", audio_file,
+    "-c:v", "libx264", "-tune", "stillimage",
+    "-c:a", "aac", "-b:a", "192k",
+    "-pix_fmt", "yuv420p",
+    "-shortest",
+    output_video
+]
+subprocess.run(ffmpeg_cmd, check=True)
 
-print(f"Downloading stream: {stream.resolution}...")
-stream.download(filename=local_video_file)
+file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
+print(f"Video Tayar! Size: {file_size_mb:.2f} MB")
 
-file_size_mb = os.path.getsize(local_video_file) / (1024 * 1024)
-print(f"Downloaded Successfully! File Size: {file_size_mb:.2f} MB")
-
-print(f"Step 3: YouTube par PRIVATE upload ho rahi hai: {title}")
+# Step 5: Upload to YouTube as Private
+print(f"Step 5: YouTube par PRIVATE upload ho rahi hai: {title}")
 body = {
     'snippet': {
         'title': title,
@@ -103,7 +131,7 @@ body = {
     }
 }
 
-media = MediaFileUpload(local_video_file, chunksize=-1, resumable=True, mimetype='video/mp4')
+media = MediaFileUpload(output_video, chunksize=-1, resumable=True, mimetype='video/mp4')
 upload_req = youtube.videos().insert(
     part=','.join(body.keys()),
     body=body,
@@ -117,5 +145,7 @@ uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-if os.path.exists(local_video_file):
-    os.remove(local_video_file)
+# Cleanup
+for f in [audio_file, image_file, output_video]:
+    if os.path.exists(f):
+        os.remove(f)
