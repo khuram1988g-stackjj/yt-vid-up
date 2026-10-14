@@ -63,12 +63,7 @@ description = desc_elem.text if desc_elem is not None else f"{title}\n\nAudio Li
 
 print(f"Target Video: {title} (ID: {latest_video_id})")
 
-# Pichla 6-second wala test hata kar nayi full video allow karne ke liye:
-# uploaded_ids check
-if latest_video_id in uploaded_ids:
-    print("Notice: Video pehle se tracker mein thi, lekin fresh complete upload ke liye proceed kiya ja raha hai...")
-
-audio_file = "full_track.mp3"
+audio_file = "full_audio.mp3"
 image_file = "cover.jpg"
 output_video = "rendered_video.mp4"
 
@@ -76,7 +71,7 @@ for f in [audio_file, image_file, output_video]:
     if os.path.exists(f):
         os.remove(f)
 
-# Step 2: High quality cover thumbnail download
+# Step 2: High quality thumbnail download
 print("Step 2: HD Thumbnail download ho raha hai...")
 thumb_res = requests.get(f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg")
 if thumb_res.status_code != 200 or len(thumb_res.content) < 5000:
@@ -85,84 +80,100 @@ if thumb_res.status_code != 200 or len(thumb_res.content) < 5000:
 with open(image_file, "wb") as f:
     f.write(thumb_res.content)
 
-# Step 3: Description se direct download link dhoond kar full song lena
-print("Step 3: Description se direct official download link scan ho raha hai...")
-urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', description)
+# Step 3: Audio Library ke Asal Download Link se Full Audio nikalna
+print("Step 3: Description se Asal Free Download Link nikaal rahe hain...")
+all_links = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', description)
 
-download_url = None
-for u in urls:
-    clean_u = u.rstrip('.,;)')
-    if any(k in clean_u.lower() for k in ["hypeddit.com", "audiolibrary", "drive.google.com", "bit.ly", "tinyurl"]):
-        download_url = clean_u
+# Strictly match Hypeddit or direct download platforms
+download_gate_url = None
+for l in all_links:
+    clean_l = l.rstrip('.,;)')
+    # YouTube ke apne links ko ignore karein
+    if "youtube.com" in clean_l or "youtu.be" in clean_l:
+        continue
+    if "hypeddit.com" in clean_l or "audiolibrary" in clean_l:
+        download_gate_url = clean_l
         break
 
 download_success = False
 
-# Method A: Direct link scraper
-if download_url:
-    print(f"Official download link mila: {download_url}")
+# Technique 1: Hypeddit page se audio stream capture
+if download_gate_url:
+    print(f"Hypeddit Download Gate Found: {download_gate_url}")
     try:
-        session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-        page = session.get(download_url, timeout=20, allow_redirects=True)
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        gate_res = s.get(download_gate_url, timeout=20)
         
-        # Check direct audio
-        if "audio" in page.headers.get("Content-Type", "") or page.url.endswith((".mp3", ".wav", ".m4a")):
-            with open(audio_file, "wb") as f:
-                f.write(page.content)
-            download_success = True
-        else:
-            soup = BeautifulSoup(page.text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if ".mp3" in href.lower() or "download" in a.text.lower():
-                    dl_target = href if href.startswith("http") else requests.compat.urljoin(page.url, href)
-                    with session.get(dl_target, stream=True, timeout=60) as r:
-                        r.raise_for_status()
-                        with open(audio_file, "wb") as f:
-                            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                                if chunk:
-                                    f.write(chunk)
-                    if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000000:
-                        download_success = True
-                        break
+        # Look for direct audio mp3 in page source or audio player tag
+        soup = BeautifulSoup(gate_res.text, "html.parser")
+        
+        # Audio tags check
+        audio_tags = soup.find_all("audio")
+        for at in audio_tags:
+            src = at.get("src") or (at.find("source") and at.find("source").get("src"))
+            if src and ".mp3" in src:
+                print(f"Direct stream URL extracted: {src}")
+                with s.get(src, stream=True, timeout=60) as r_stream:
+                    with open(audio_file, "wb") as f_out:
+                        for chunk in r_stream.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                f_out.write(chunk)
+                if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000000:
+                    download_success = True
+                    break
+        
+        # Check script variables if audio tag not found directly
+        if not download_success:
+            mp3_matches = re.findall(r'https?://[^\s\'"]+\.mp3[^\s\'"]*', gate_res.text)
+            for m_url in mp3_matches:
+                print(f"Script MP3 URL found: {m_url}")
+                with s.get(m_url, stream=True, timeout=60) as r_stream:
+                    with open(audio_file, "wb") as f_out:
+                        for chunk in r_stream.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                f_out.write(chunk)
+                if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000000:
+                    download_success = True
+                    break
     except Exception as e:
-        print(f"Direct link resolution fail: {e}")
+        print(f"Hypeddit fetch error: {e}")
 
-# Method B: Dedicated MP3 stream mirrors for full duration
+# Technique 2: Dedicated public full-song stream API fallback
 if not download_success:
-    print("Method B: Audio stream mirror se full song download ho raha hai...")
-    apis = [
-        f"https://api.vevioz.com/api/button/mp3/{latest_video_id}",
-        f"https://ytstream.nocopyright.workers.dev/?id={latest_video_id}"
+    print("Technique 2: Secondary Audio Gate se full track resolve ho raha hai...")
+    stream_resolvers = [
+        f"https://yt-download.org/api/button/mp3/{latest_video_id}",
+        f"https://loader.to/ajax/download.php?format=mp3&url=https://www.youtube.com/watch?v={latest_video_id}"
     ]
-    for api in apis:
+    for res_url in stream_resolvers:
         try:
-            r = requests.get(api, timeout=20)
-            if r.status_code == 200:
-                match = re.search(r'href=[\'"](https?://[^\'"]+\.mp3[^\'"]*)[\'"]', r.text)
-                if match:
-                    mp3_stream = match.group(1)
-                    with requests.get(mp3_stream, stream=True, timeout=60) as dl:
-                        with open(audio_file, "wb") as f:
-                            for chunk in dl.iter_content(chunk_size=1024 * 1024):
+            r = requests.get(res_url, timeout=15)
+            if "download_url" in r.text or "href=" in r.text:
+                matches = re.findall(r'https?://[^\s\'"]+\.mp3[^\s\'"]*', r.text)
+                for dl_link in matches:
+                    with requests.get(dl_link, stream=True, timeout=60) as audio_req:
+                        with open(audio_file, "wb") as f_out:
+                            for chunk in audio_req.iter_content(chunk_size=1024 * 1024):
                                 if chunk:
-                                    f.write(chunk)
+                                    f_out.write(chunk)
                     if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000000:
                         download_success = True
                         break
+            if download_success:
+                break
         except Exception:
             continue
 
-if not download_success or not os.path.exists(audio_file) or os.path.getsize(audio_file) < 500000:
-    print("Full audio file abhi fetch nahi ho saki. 5-second placeholder upload nahi kiya jayega.")
+if not download_success or not os.path.exists(audio_file) or os.path.getsize(audio_file) < 800000:
+    print("Error: Full audio download mukammal nahi ho saka. Adhoora audio upload nahi kiya jayega.")
     exit(1)
 
-audio_size_mb = os.path.getsize(audio_file) / (1024 * 1024)
-print(f"Full Audio Downloaded Successfully! Size: {audio_size_mb:.2f} MB")
+audio_mb = os.path.getsize(audio_file) / (1024 * 1024)
+print(f"Complete Full Audio Downloaded! Size: {audio_mb:.2f} MB")
 
 # Step 4: Full HD MP4 Video Render via FFmpeg
-print("Step 4: Poore gaane ki Full HD Video render ki ja rahi hai...")
+print("Step 4: Poori Video FFmpeg ke zariye render ho rahi hai...")
 subprocess.run([
     "ffmpeg", "-y",
     "-loop", "1", "-i", image_file,
@@ -174,8 +185,8 @@ subprocess.run([
     output_video
 ], check=True)
 
-final_size_mb = os.path.getsize(output_video) / (1024 * 1024)
-print(f"Mukammal Video Rendered! Final Video Size: {final_size_mb:.2f} MB")
+final_video_mb = os.path.getsize(output_video) / (1024 * 1024)
+print(f"Video Tayar! Full Duration Video Size: {final_video_mb:.2f} MB")
 
 # Step 5: Upload to YouTube as Private
 print(f"Step 5: YouTube par mukammal video PRIVATE upload ho rahi hai: {title}")
@@ -199,7 +210,7 @@ upload_req = youtube.videos().insert(
 )
 upload_resp = upload_req.execute()
 new_id = upload_resp.get("id")
-print(f"Success! Mukammal Video Upload Ho Gayi. Video ID: {new_id}")
+print(f"Success! Mukammal Full-Length Video Upload Ho Gayi. Video ID: {new_id}")
 
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
