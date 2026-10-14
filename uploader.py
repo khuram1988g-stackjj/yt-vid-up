@@ -2,14 +2,10 @@ import os
 import json
 import xml.etree.ElementTree as ET
 import requests
-from pytube import YouTube
-from pytube.innertube import InnerTube
+from pytubefix import YouTube
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-
-# InnerTube client ko Android client par force karna (Bot detection bypass)
-InnerTube.client_name = "ANDROID_MUSIC"
 
 CLIENT_ID = "720341227533-" + "fk5ds2vsb14aekek3th6aft3i98a0j9g" + ".apps.googleusercontent.com"
 CLIENT_SECRET = "GOCSPX-" + "uvFVhhCnqg1mbUoXevKvHjr86A9k"
@@ -75,21 +71,20 @@ local_video_file = "downloaded_track.mp4"
 if os.path.exists(local_video_file):
     os.remove(local_video_file)
 
-print("Step 2: pytube (Android Client) ke zariye direct download shuru...")
+print("Step 2: pytubefix ke zariye direct stream download shuru...")
 
-# pytube stream download
-yt = YouTube(target_url, use_oauth=False, allow_oauth_cache=False)
-stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-
-if not stream:
-    # Fallback to adaptive mp4 stream
-    stream = yt.streams.filter(file_extension='mp4').first()
+# pytubefix actively maintained YouTube downloader hai
+yt = YouTube(target_url, client='ANDROID')
+stream = yt.streams.get_highest_resolution()
 
 if not stream:
-    print("Stream nahi mil saki.")
+    stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+
+if not stream:
+    print("Stream extract nahi ho saki.")
     exit(1)
 
-print(f"Stream selected: {stream.resolution} ({stream.mime_type}). Downloading...")
+print(f"Downloading stream: {stream.resolution}...")
 stream.download(filename=local_video_file)
 
 file_size_mb = os.path.getsize(local_video_file) / (1024 * 1024)
