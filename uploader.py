@@ -4,6 +4,7 @@ import json
 import subprocess
 import xml.etree.ElementTree as ET
 import requests
+from bs4 import BeautifulSoup
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -35,61 +36,7 @@ else:
     uploaded_ids = set()
 
 print("Step 1: Feed se latest video check ki ja rahi hai...")
-feed_urlYouTube se video download karne ke liye agar `yt-dlp` ya direct scrapers datacenter IP block ki wajah se masla kar rahe hon, to Linux runner par **`aria2c`** ya **`wget` / `curl`** ke zariye direct third-party CDN / REST download engine ko call kiya ja sakta hai.
-
-GitHub Actions par kisi independent downloader utility se high-speed download karwane ka tareeqa yeh hai:
-
----
-
-### Strategy:
-1. `aria2c` ek powerful multi-connection download utility hai jo Linux environment mein natively install hoti hai.
-2. Hum Python script ke zariye video ka verified external media stream link nikaalte hain aur us link ko download karne ke liye `aria2c` utility ko pass karte hain.
-3. Download complete hone ke baad video YouTube par **Private** upload hoti hai.
-
----
-
-### Step 1: `uploader.py` ko is Code se Update Karein
-
-```python
-import os
-import re
-import json
-import subprocess
-import xml.etree.ElementTree as ET
-import requests
-from bs4 import BeautifulSoup
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
-CLIENT_ID = "720341227533-" + "fk5ds2vsb14aekek3th6aft3i98a0j9g" + ".apps.googleusercontent.com"
-CLIENT_SECRET = "GOCSPX-" + "uvFVhhCnqg1mbUoXevKvHjr86A9k"
-REFRESH_TOKEN = "1//05PFTTurtAsbKCgYIARAAGAUSNwF-" + "L9Ir1nzgU8Iy5TL8_PmlI9uuOS8UI_DXBBuNSz-AIGj9x8ZjMOiJiJuCX81YR18PR4Qb8kY"
-
-TRACKER_FILE = "uploaded_music.json"
-CHANNEL_ID = "UCht8qITGkBvXKsR1Byln-wA"
-
-creds = Credentials(
-    None,
-    refresh_token=REFRESH_TOKEN,
-    token_uri="[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)",
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    scopes=["[https://www.googleapis.com/auth/youtube.upload](https://www.googleapis.com/auth/youtube.upload)"]
-)
-youtube = build('youtube', 'v3', credentials=creds)
-
-if os.path.exists(TRACKER_FILE):
-    try:
-        with open(TRACKER_FILE, "r") as f:
-            uploaded_ids = set(json.load(f))
-    except Exception:
-        uploaded_ids = set()
-else:
-    uploaded_ids = set()
-
-print("Step 1: Feed se latest video check ho rahi hai...")
-feed_url = f"[https://www.youtube.com/feeds/videos.xml?channel_id=](https://www.youtube.com/feeds/videos.xml?channel_id=){CHANNEL_ID}"
+feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={CHANNEL_ID}"
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 resp = requests.get(feed_url, headers=headers, timeout=20)
 
@@ -99,9 +46,9 @@ if resp.status_code != 200:
 
 root = ET.fromstring(resp.content)
 ns = {
-    'atom': '[http://www.w3.org/2005/Atom](http://www.w3.org/2005/Atom)',
-    'yt': '[http://www.youtube.com/xml/schemas/2015](http://www.youtube.com/xml/schemas/2015)',
-    'media': '[http://search.yahoo.com/mrss/](http://search.yahoo.com/mrss/)'
+    'atom': 'http://www.w3.org/2005/Atom',
+    'yt': 'http://www.youtube.com/xml/schemas/2015',
+    'media': 'http://search.yahoo.com/mrss/'
 }
 
 entry = root.find('atom:entry', ns)
@@ -126,9 +73,9 @@ for f in [audio_file, image_file, output_video]:
 
 # Step 2: High quality cover thumbnail download
 print("Step 2: HD Thumbnail download ho raha hai...")
-thumb_res = requests.get(f"[https://i.ytimg.com/vi/](https://i.ytimg.com/vi/){latest_video_id}/maxresdefault.jpg")
+thumb_res = requests.get(f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg")
 if thumb_res.status_code != 200 or len(thumb_res.content) < 5000:
-    thumb_res = requests.get(f"[https://i.ytimg.com/vi/](https://i.ytimg.com/vi/){latest_video_id}/hqdefault.jpg")
+    thumb_res = requests.get(f"https://i.ytimg.com/vi/{latest_video_id}/hqdefault.jpg")
 
 with open(image_file, "wb") as f:
     f.write(thumb_res.content)
