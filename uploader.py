@@ -4,6 +4,7 @@ import json
 import subprocess
 import xml.etree.ElementTree as ET
 import requests
+from bs4 import BeautifulSoup
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -36,7 +37,7 @@ else:
 
 print("Step 1: Feed se latest video check ho rahi hai...")
 feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={CHANNEL_ID}"
-headers = {"User-Agent": "Mozilla/5.0"}
+headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 resp = requests.get(feed_url, headers=headers, timeout=20)
 
 if resp.status_code != 200:
@@ -62,11 +63,12 @@ description = desc_elem.text if desc_elem is not None else f"{title}\n\nAudio Li
 
 print(f"Target Video: {title} (ID: {latest_video_id})")
 
+# Pichla 6-second wala test hata kar nayi full video allow karne ke liye:
+# uploaded_ids check
 if latest_video_id in uploaded_ids:
-    print("Yeh video pehle hi upload ho chuki hai. Exiting.")
-    exit(0)
+    print("Notice: Video pehle se tracker mein thi, lekin fresh complete upload ke liye proceed kiya ja raha hai...")
 
-audio_file = "track.mp3"
+audio_file = "full_track.mp3"
 image_file = "cover.jpg"
 output_video = "rendered_video.mp4"
 
@@ -74,7 +76,7 @@ for f in [audio_file, image_file, output_video]:
     if os.path.exists(f):
         os.remove(f)
 
-# Step 2: Thumbnail download
+# Step 2: High quality cover thumbnail download
 print("Step 2: HD Thumbnail download ho raha hai...")
 thumb_res = requests.get(f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg")
 if thumb_res.status_code != 200 or len(thumb_res.content) < 5000:
@@ -83,57 +85,84 @@ if thumb_res.status_code != 200 or len(thumb_res.content) < 5000:
 with open(image_file, "wb") as f:
     f.write(thumb_res.content)
 
-# Step 3: Direct Download link nikaalna
-print("Step 3: Direct music audio resolve ho raha hai...")
+# Step 3: Description se direct download link dhoond kar full song lena
+print("Step 3: Description se direct official download link scan ho raha hai...")
+urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', description)
 
-# Description se free download URL dhoondna
-links = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', description)
-direct_music_url = None
-
-for link in links:
-    # Audio Library aksar hypeddit, bit.ly, ya direct download links deti hai
-    if any(k in link.lower() for k in ["download", "hypeddit", "audiolibrary", "drive.google"]):
-        direct_music_url = link
+download_url = None
+for u in urls:
+    clean_u = u.rstrip('.,;)')
+    if any(k in clean_u.lower() for k in ["hypeddit.com", "audiolibrary", "drive.google.com", "bit.ly", "tinyurl"]):
+        download_url = clean_u
         break
 
-downloaded_audio = False
+download_success = False
 
-# Fallback: Open third-party MP3 backend API (Jo server-side fetch karti hai, GitHub se nahi)
-if not downloaded_audio:
-    print("Public MP3 resolver pipeline se audio stream laya ja raha hai...")
-    resolver_apis = [
-        f"https://api.vkrdownloader.com/server?v={latest_video_id}",
-        f"https://yt-api.org/api/mp3/{latest_video_id}"
+# Method A: Direct link scraper
+if download_url:
+    print(f"Official download link mila: {download_url}")
+    try:
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        page = session.get(download_url, timeout=20, allow_redirects=True)
+        
+        # Check direct audio
+        if "audio" in page.headers.get("Content-Type", "") or page.url.endswith((".mp3", ".wav", ".m4a")):
+            with open(audio_file, "wb") as f:
+                f.write(page.content)
+            download_success = True
+        else:
+            soup = BeautifulSoup(page.text, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if ".mp3" in href.lower() or "download" in a.text.lower():
+                    dl_target = href if href.startswith("http") else requests.compat.urljoin(page.url, href)
+                    with session.get(dl_target, stream=True, timeout=60) as r:
+                        r.raise_for_status()
+                        with open(audio_file, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                                if chunk:
+                                    f.write(chunk)
+                    if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000000:
+                        download_success = True
+                        break
+    except Exception as e:
+        print(f"Direct link resolution fail: {e}")
+
+# Method B: Dedicated MP3 stream mirrors for full duration
+if not download_success:
+    print("Method B: Audio stream mirror se full song download ho raha hai...")
+    apis = [
+        f"https://api.vevioz.com/api/button/mp3/{latest_video_id}",
+        f"https://ytstream.nocopyright.workers.dev/?id={latest_video_id}"
     ]
-    for r_url in resolver_apis:
+    for api in apis:
         try:
-            r = requests.get(r_url, timeout=15)
+            r = requests.get(api, timeout=20)
             if r.status_code == 200:
-                data = r.json()
-                mp3_url = data.get("download_url") or data.get("url")
-                if mp3_url:
-                    with requests.get(mp3_url, stream=True, timeout=30) as dl:
+                match = re.search(r'href=[\'"](https?://[^\'"]+\.mp3[^\'"]*)[\'"]', r.text)
+                if match:
+                    mp3_stream = match.group(1)
+                    with requests.get(mp3_stream, stream=True, timeout=60) as dl:
                         with open(audio_file, "wb") as f:
                             for chunk in dl.iter_content(chunk_size=1024 * 1024):
                                 if chunk:
                                     f.write(chunk)
-                    if os.path.exists(audio_file) and os.path.getsize(audio_file) > 100000:
-                        downloaded_audio = True
+                    if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000000:
+                        download_success = True
                         break
         except Exception:
             continue
 
-# Final local synthesis agar upstream direct link busy ho
-if not downloaded_audio:
-    print("Direct Stream synth trigger ho raha hai...")
-    # Clean 4-second audio fallback verification to test pipeline complete flow
-    subprocess.run([
-        "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-t", "5", "-q:a", "9", "-acodec", "libmp3lame", audio_file
-    ], check=True)
+if not download_success or not os.path.exists(audio_file) or os.path.getsize(audio_file) < 500000:
+    print("Full audio file abhi fetch nahi ho saki. 5-second placeholder upload nahi kiya jayega.")
+    exit(1)
 
-# Step 4: Render MP4 with FFmpeg
-print("Step 4: FFmpeg se full HD MP4 video render ho rahi hai...")
+audio_size_mb = os.path.getsize(audio_file) / (1024 * 1024)
+print(f"Full Audio Downloaded Successfully! Size: {audio_size_mb:.2f} MB")
+
+# Step 4: Full HD MP4 Video Render via FFmpeg
+print("Step 4: Poore gaane ki Full HD Video render ki ja rahi hai...")
 subprocess.run([
     "ffmpeg", "-y",
     "-loop", "1", "-i", image_file,
@@ -145,7 +174,11 @@ subprocess.run([
     output_video
 ], check=True)
 
-print(f"Step 5: YouTube par PRIVATE upload ho rahi hai: {title}")
+final_size_mb = os.path.getsize(output_video) / (1024 * 1024)
+print(f"Mukammal Video Rendered! Final Video Size: {final_size_mb:.2f} MB")
+
+# Step 5: Upload to YouTube as Private
+print(f"Step 5: YouTube par mukammal video PRIVATE upload ho rahi hai: {title}")
 body = {
     'snippet': {
         'title': title,
@@ -166,7 +199,7 @@ upload_req = youtube.videos().insert(
 )
 upload_resp = upload_req.execute()
 new_id = upload_resp.get("id")
-print(f"Success! Video Private Upload Ho Gayi. Video ID: {new_id}")
+print(f"Success! Mukammal Video Upload Ho Gayi. Video ID: {new_id}")
 
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
