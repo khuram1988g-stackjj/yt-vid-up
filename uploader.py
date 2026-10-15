@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import xml.etree.ElementTree as ET
 import requests
@@ -7,7 +6,6 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Split credentials (GitHub Secret Scanner bypass)
 CLIENT_ID = "720341227533-" + "fk5ds2vsb14aekek3th6aft3i98a0j9g" + ".apps.googleusercontent.com"
 CLIENT_SECRET = "GOCSPX-" + "uvFVhhCnqg1mbUoXevKvHjr86A9k"
 REFRESH_TOKEN = "1//05PFTTurtAsbKCgYIARAAGAUSNwF-" + "L9Ir1nzgU8Iy5TL8_PmlI9uuOS8UI_DXBBuNSz-AIGj9x8ZjMOiJiJuCX81YR18PR4Qb8kY"
@@ -60,7 +58,6 @@ title = entry.find('atom:title', ns).text
 desc_elem = entry.find('.//media:description', ns)
 description = desc_elem.text if desc_elem is not None else f"{title}\n\nAudio Library Music"
 
-target_url = f"https://www.youtube.com/watch?v={latest_video_id}"
 print(f"Target Video: {title} (ID: {latest_video_id})")
 
 if latest_video_id in uploaded_ids:
@@ -71,73 +68,77 @@ video_file = "downloaded_video.mp4"
 if os.path.exists(video_file):
     os.remove(video_file)
 
-print("Step 2: Online web downloader API ke zariye MP4 link fetch ho raha hai...")
+print("Step 2: Active API Mirrors se direct MP4 stream dhoondi ja rahi hai...")
 
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://google.com/"
-})
+# Active Invidious & Piped backend instances
+active_mirrors = [
+    "https://invidious.jing.rocks",
+    "https://inv.nadeko.net",
+    "https://yt.drgnz.club",
+    "https://invidious.private.coffee",
+    "https://pipedapi.kavin.rocks"
+]
 
-download_url = None
+download_success = False
 
-# Online Web Downloader Engine 1: Y2Mate / Converter API
-try:
-    print("Connecting to Web Downloader Backend 1...")
-    api_url = "https://cdn35.savetube.me/info"
-    payload = {"url": target_url}
-    r = session.post(api_url, json=payload, timeout=20)
-    if r.status_code == 200:
-        data = r.json().get("data", {})
-        video_formats = data.get("video_formats", [])
-        # 720p ya best format chunna
-        for fmt in video_formats:
-            if fmt.get("url"):
-                download_url = fmt.get("url")
-                break
-except Exception as e:
-    print(f"Backend 1 error: {e}")
-
-# Online Web Downloader Engine 2: Fallback Web Resolver
-if not download_url:
+for mirror in active_mirrors:
+    print(f"Connecting to mirror: {mirror}...")
     try:
-        print("Connecting to Web Downloader Backend 2...")
-        r2 = session.get(f"https://api.vevioz.com/api/button/mp4/{latest_video_id}", timeout=20)
-        if r2.status_code == 200:
-            match = re.search(r'href=[\'"](https?://[^\'"]+\.mp4[^\'"]*)[\'"]', r2.text)
-            if match:
-                download_url = match.group(1)
+        # Route 1: Invidious API
+        if "piped" not in mirror:
+            api_url = f"{mirror}/api/v1/videos/{latest_video_id}"
+            r = requests.get(api_url, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                streams = data.get("formatStreams", [])
+                
+                # Best MP4 format dhoondna
+                selected_url = None
+                for s in streams:
+                    if "video/mp4" in s.get("type", ""):
+                        selected_url = s.get("url")
+                        break
+                
+                if not selected_url and streams:
+                    selected_url = streams[-1].get("url")
+                
+                if selected_url:
+                    print(f"Stream link acquired from {mirror}! Downloading video...")
+                    with requests.get(selected_url, stream=True, timeout=90) as stream_req:
+                        stream_req.raise_for_status()
+                        with open(video_file, "wb") as f:
+                            for chunk in stream_req.iter_content(chunk_size=1024 * 1024):
+                                if chunk:
+                                    f.write(chunk)
+                    if os.path.exists(video_file) and os.path.getsize(video_file) > 1000000:
+                        download_success = True
+                        break
+        # Route 2: Piped API
+        else:
+            api_url = f"{mirror}/streams/{latest_video_id}"
+            r = requests.get(api_url, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                v_streams = data.get("videoStreams", [])
+                mp4_streams = [s for s in v_streams if s.get("format") == "MPEG_4" and not s.get("videoOnly")]
+                if mp4_streams:
+                    stream_url = mp4_streams[0].get("url")
+                    print(f"Stream link acquired from Piped! Downloading...")
+                    with requests.get(stream_url, stream=True, timeout=90) as stream_req:
+                        stream_req.raise_for_status()
+                        with open(video_file, "wb") as f:
+                            for chunk in stream_req.iter_content(chunk_size=1024 * 1024):
+                                if chunk:
+                                    f.write(chunk)
+                    if os.path.exists(video_file) and os.path.getsize(video_file) > 1000000:
+                        download_success = True
+                        break
     except Exception as e:
-        print(f"Backend 2 error: {e}")
+        print(f"Mirror {mirror} failed ({e}), moving to next...")
+        continue
 
-# Online Web Downloader Engine 3: SnapSave Web API
-if not download_url:
-    try:
-        print("Connecting to Web Downloader Backend 3...")
-        r3 = session.post("https://snapsave.io/api/ajaxSearch", data={"q": target_url}, timeout=20)
-        if r3.status_code == 200:
-            match = re.search(r'href=[\'"](https?://[^\'"]+\.mp4[^\'"]*)[\'"]', r3.text)
-            if match:
-                download_url = match.group(1)
-    except Exception as e:
-        print(f"Backend 3 error: {e}")
-
-if not download_url:
-    print("Web download servers se direct link resolve nahi ho saka.")
-    exit(1)
-
-print(f"Direct Web Stream Link mil gaya: {download_url[:60]}...")
-print("Stream download ho rahi hai...")
-
-with session.get(download_url, stream=True, timeout=120) as stream_req:
-    stream_req.raise_for_status()
-    with open(video_file, "wb") as f:
-        for chunk in stream_req.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
-
-if not os.path.exists(video_file) or os.path.getsize(video_file) < 500000:
-    print("File download complete nahi hui.")
+if not download_success or not os.path.exists(video_file) or os.path.getsize(video_file) < 500000:
+    print("Direct video download mukammal nahi ho saka.")
     exit(1)
 
 file_size_mb = os.path.getsize(video_file) / (1024 * 1024)
