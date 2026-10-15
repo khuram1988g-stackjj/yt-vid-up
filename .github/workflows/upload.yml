@@ -1,4 +1,4 @@
-name: Audio Library Sync (Private)
+name: Direct Video Sync (No Cookies)
 
 on:
   schedule:
@@ -21,15 +21,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install System Utilities (aria2 & ffmpeg)
+      - name: Setup Node.js (For Challenge Decryption)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg aria2
+          sudo apt-get install -y ffmpeg
 
-      - name: Install Python Dependencies
+      - name: Install Latest Dependencies & Token Generator
         run: |
           pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib requests beautifulsoup4
+          pip install google-api-python-client google-auth-oauthlib requests
+          pip install -U --pre "yt-dlp[default]"
+          npm install -g @fshangala/pot-provider || true
 
       - name: Run Music Uploader
         run: |
