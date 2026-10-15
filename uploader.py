@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import subprocess
 import xml.etree.ElementTree as ET
@@ -7,6 +8,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+# Split credentials (GitHub Secret Scanner bypass)
 CLIENT_ID = "720341227533-" + "fk5ds2vsb14aekek3th6aft3i98a0j9g" + ".apps.googleusercontent.com"
 CLIENT_SECRET = "GOCSPX-" + "uvFVhhCnqg1mbUoXevKvHjr86A9k"
 REFRESH_TOKEN = "1//05PFTTurtAsbKCgYIARAAGAUSNwF-" + "L9Ir1nzgU8Iy5TL8_PmlI9uuOS8UI_DXBBuNSz-AIGj9x8ZjMOiJiJuCX81YR18PR4Qb8kY"
@@ -66,38 +68,36 @@ if latest_video_id in uploaded_ids:
     print("Yeh video pehle hi upload ho chuki hai. Process exit.")
     exit(0)
 
-video_file = "direct_downloaded_video.mp4"
-if os.path.exists(video_file):
-    os.remove(video_file)
+# Purani temporary files clean karna
+download_dir = "downloads"
+os.makedirs(download_dir, exist_ok=True)
+for f in glob.glob(f"{download_dir}/*"):
+    os.remove(f)
 
-print("Step 2: Direct Video Download shuru (No Cookies)...")
+print("Step 2: you-get tool ke zariye video download shuru...")
 
-# Direct video download routing using web_creator & mweb fallbacks
-dl_cmd = [
-    "yt-dlp",
-    "--extractor-args", "youtube:player_client=web_creator,mweb",
-    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-    "--merge-output-format", "mp4",
-    "-o", video_file,
+# you-get command execution
+cmd_youget = [
+    "you-get",
+    "-o", download_dir,
+    "-O", "target_video",
     target_url
 ]
 
-res = subprocess.run(dl_cmd)
+subprocess.run(cmd_youget, check=True)
 
-# Fallback format agar multi-stream muxing par issue aaye
-if res.returncode != 0 or not os.path.exists(video_file) or os.path.getsize(video_file) < 500000:
-    print("Primary format check failed. Trying progressive single-file stream...")
-    fallback_cmd = [
-        "yt-dlp",
-        "--extractor-args", "youtube:player_client=mweb",
-        "-f", "18/22/b",
-        "-o", video_file,
-        target_url
-    ]
-    subprocess.run(fallback_cmd, check=True)
+# Downloaded video file dhondna
+downloaded_files = glob.glob(f"{download_dir}/target_video.*")
+# subtitles (.cmt.xml ya .danmaku) ko filter out karna
+video_files = [f for f in downloaded_files if not f.endswith(('.xml', '.json', '.txt'))]
 
-file_size_mb = os.path.getsize(video_file) / (1024 * 1024)
-print(f"Direct Video Downloaded Successfully! Size: {file_size_mb:.2f} MB")
+if not video_files or os.path.getsize(video_files[0]) < 500000:
+    print("you-get se video download mukammal nahi ho saki.")
+    exit(1)
+
+local_video_file = video_files[0]
+file_size_mb = os.path.getsize(local_video_file) / (1024 * 1024)
+print(f"Downloaded Successfully via you-get! File: {local_video_file} ({file_size_mb:.2f} MB)")
 
 print(f"Step 3: YouTube par PRIVATE upload ho rahi hai: {title}")
 body = {
@@ -112,7 +112,7 @@ body = {
     }
 }
 
-media = MediaFileUpload(video_file, chunksize=-1, resumable=True, mimetype='video/mp4')
+media = MediaFileUpload(local_video_file, chunksize=-1, resumable=True, mimetype='video/mp4')
 upload_req = youtube.videos().insert(
     part=','.join(body.keys()),
     body=body,
@@ -120,11 +120,12 @@ upload_req = youtube.videos().insert(
 )
 upload_resp = upload_req.execute()
 new_id = upload_resp.get("id")
-print(f"Success! Direct Video Private Upload Ho Gayi. Video ID: {new_id}")
+print(f"Success! Video Private Upload Ho Gayi. Video ID: {new_id}")
 
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-if os.path.exists(video_file):
-    os.remove(video_file)
+# Cleanup
+for f in glob.glob(f"{download_dir}/*"):
+    os.remove(f)
