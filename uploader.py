@@ -1,10 +1,8 @@
 import os
-import re
 import json
 import subprocess
 import xml.etree.ElementTree as ET
 import requests
-from bs4 import BeautifulSoup
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -61,133 +59,47 @@ title = entry.find('atom:title', ns).text
 desc_elem = entry.find('.//media:description', ns)
 description = desc_elem.text if desc_elem is not None else f"{title}\n\nAudio Library Music"
 
+target_url = f"https://www.youtube.com/watch?v={latest_video_id}"
 print(f"Target Video: {title} (ID: {latest_video_id})")
 
 if latest_video_id in uploaded_ids:
-    print("Yeh video pehle hi upload ho chuki hai. No action needed.")
+    print("Yeh video pehle hi upload ho chuki hai. Process exit.")
     exit(0)
 
-audio_file = "full_audio.mp3"
-image_file = "cover.jpg"
-output_video = "rendered_video.mp4"
+video_file = "direct_downloaded_video.mp4"
+if os.path.exists(video_file):
+    os.remove(video_file)
 
-for f in [audio_file, image_file, output_video]:
-    if os.path.exists(f):
-        os.remove(f)
+print("Step 2: Direct Video Download shuru (No Cookies)...")
 
-# Step 2: High quality thumbnail download
-print("Step 2: HD Thumbnail download ho raha hai...")
-thumb_res = requests.get(f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg")
-if thumb_res.status_code != 200 or len(thumb_res.content) < 5000:
-    thumb_res = requests.get(f"https://i.ytimg.com/vi/{latest_video_id}/hqdefault.jpg")
+# Direct video download routing using web_creator & mweb fallbacks
+dl_cmd = [
+    "yt-dlp",
+    "--extractor-args", "youtube:player_client=web_creator,mweb",
+    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    "--merge-output-format", "mp4",
+    "-o", video_file,
+    target_url
+]
 
-with open(image_file, "wb") as f:
-    f.write(thumb_res.content)
+res = subprocess.run(dl_cmd)
 
-# Step 3: Audio source dhoondna aur aria2c se download karwana
-print("Step 3: Direct audio stream resolve ho raha hai...")
-
-all_links = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', description)
-direct_stream_url = None
-
-# Filter out social / generic YouTube links
-candidate_links = []
-for l in all_links:
-    clean_l = l.rstrip('.,;)')
-    lower_l = clean_l.lower()
-    if any(skip in lower_l for skip in ["youtube.com", "youtu.be", "instagram.com", "facebook.com", "twitter.com", "t.me"]):
-        continue
-    candidate_links.append(clean_l)
-
-session = requests.Session()
-session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-
-# Route A: Candidate landing pages se .mp3 stream nikalna
-for gate_url in candidate_links:
-    try:
-        print(f"Checking gate link: {gate_url}")
-        gate_res = session.get(gate_url, timeout=15, allow_redirects=True)
-        soup = BeautifulSoup(gate_res.text, "html.parser")
-        
-        # Audio tag check
-        for at in soup.find_all("audio"):
-            src = at.get("src") or (at.find("source") and at.find("source").get("src"))
-            if src and ".mp3" in src:
-                direct_stream_url = src
-                break
-        
-        # In-page script MP3 links check
-        if not direct_stream_url:
-            mp3_matches = re.findall(r'https?://[^\s\'"]+\.mp3[^\s\'"]*', gate_res.text)
-            if mp3_matches:
-                direct_stream_url = mp3_matches[0]
-                
-        if direct_stream_url:
-            break
-    except Exception as e:
-        print(f"Gate check failed for {gate_url}: {e}")
-
-# Route B: Fallback REST audio extractors (agar description mein koi direct download link na ho)
-if not direct_stream_url:
-    print("Direct landing link nahi mila, public audio resolvers try ho rahe hain...")
-    api_resolvers = [
-        f"https://api.vevioz.com/api/button/mp3/{latest_video_id}",
-        f"https://yt-download.org/api/button/mp3/{latest_video_id}"
+# Fallback format agar multi-stream muxing par issue aaye
+if res.returncode != 0 or not os.path.exists(video_file) or os.path.getsize(video_file) < 500000:
+    print("Primary format check failed. Trying progressive single-file stream...")
+    fallback_cmd = [
+        "yt-dlp",
+        "--extractor-args", "youtube:player_client=mweb",
+        "-f", "18/22/b",
+        "-o", video_file,
+        target_url
     ]
-    for api_url in api_resolvers:
-        try:
-            r = session.get(api_url, timeout=15)
-            if r.status_code == 200:
-                matches = re.findall(r'href=[\'"](https?://[^\'"]+\.mp3[^\'"]*)[\'"]', r.text)
-                if matches:
-                    direct_stream_url = matches[0]
-                    break
-        except Exception:
-            continue
+    subprocess.run(fallback_cmd, check=True)
 
-# Step 4: aria2c download engine execution
-download_complete = False
-if direct_stream_url:
-    print(f"Direct stream link mil gaya: {direct_stream_url}")
-    print("Download software (aria2c) se high-speed stream download shuru...")
-    aria_cmd = [
-        "aria2c",
-        "-x", "8",
-        "-s", "8",
-        "-k", "1M",
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "-o", audio_file,
-        direct_stream_url
-    ]
-    res = subprocess.run(aria_cmd)
-    if res.returncode == 0 and os.path.exists(audio_file) and os.path.getsize(audio_file) > 500000:
-        download_complete = True
+file_size_mb = os.path.getsize(video_file) / (1024 * 1024)
+print(f"Direct Video Downloaded Successfully! Size: {file_size_mb:.2f} MB")
 
-if not download_complete:
-    print("Audio download mukammal nahi ho saka.")
-    exit(1)
-
-audio_mb = os.path.getsize(audio_file) / (1024 * 1024)
-print(f"Complete Audio Downloaded! File Size: {audio_mb:.2f} MB")
-
-# Step 5: Full HD MP4 Video Render via FFmpeg
-print("Step 5: FFmpeg se full video render ho rahi hai...")
-subprocess.run([
-    "ffmpeg", "-y",
-    "-loop", "1", "-i", image_file,
-    "-i", audio_file,
-    "-c:v", "libx264", "-tune", "stillimage",
-    "-c:a", "aac", "-b:a", "192k",
-    "-pix_fmt", "yuv420p",
-    "-shortest",
-    output_video
-], check=True)
-
-final_video_mb = os.path.getsize(output_video) / (1024 * 1024)
-print(f"Video Tayar! Final Video Size: {final_video_mb:.2f} MB")
-
-# Step 6: YouTube par upload as Private
-print(f"Step 6: YouTube par mukammal video PRIVATE upload ho rahi hai: {title}")
+print(f"Step 3: YouTube par PRIVATE upload ho rahi hai: {title}")
 body = {
     'snippet': {
         'title': title,
@@ -200,7 +112,7 @@ body = {
     }
 }
 
-media = MediaFileUpload(output_video, chunksize=-1, resumable=True, mimetype='video/mp4')
+media = MediaFileUpload(video_file, chunksize=-1, resumable=True, mimetype='video/mp4')
 upload_req = youtube.videos().insert(
     part=','.join(body.keys()),
     body=body,
@@ -208,12 +120,11 @@ upload_req = youtube.videos().insert(
 )
 upload_resp = upload_req.execute()
 new_id = upload_resp.get("id")
-print(f"Success! Mukammal Full-Length Video Upload Ho Gayi. Video ID: {new_id}")
+print(f"Success! Direct Video Private Upload Ho Gayi. Video ID: {new_id}")
 
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-for f in [audio_file, image_file, output_video]:
-    if os.path.exists(f):
-        os.remove(f)
+if os.path.exists(video_file):
+    os.remove(video_file)
