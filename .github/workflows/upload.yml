@@ -1,8 +1,7 @@
-name: Audio Library Sync (Private)
+name: Audio Library Auto Sync (Private)
 
 on:
   schedule:
-    # Daily at 5:00 PM PKT (12:00 PM UTC)
     - cron: '0 12 * * *'
   workflow_dispatch:
 
@@ -13,25 +12,28 @@ jobs:
   sync_and_upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Python Runtime
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install System Dependencies
+      # Yeh step GitHub ki Acceptable Use Policy violate karta hai aur account ban karta hai:
+      - name: Install System Tools & Tor Service
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg tor
+          sudo systemctl start tor
+          sleep 3
 
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
           pip install google-api-python-client google-auth-oauthlib requests "yt-dlp[default]"
 
-      - name: Run Uploader Script
+      - name: Run Music Uploader
         run: |
           python uploader.py
 
@@ -43,6 +45,4 @@ jobs:
             git add uploaded_music.json
             git commit -m "Update uploaded_music.json tracker" || echo "No changes to commit"
             git push
-          else
-            echo "Tracker file not found, skipping."
           fi
