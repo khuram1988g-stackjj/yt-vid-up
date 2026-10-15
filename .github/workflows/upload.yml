@@ -1,8 +1,8 @@
-name: Direct Video Sync (No Cookies)
+name: Audio Library Sync (Private)
 
 on:
   schedule:
-    # Daily 5:00 PM PKT (12:00 PM UTC)
+    # Daily at 5:00 PM PKT (12:00 PM UTC)
     - cron: '0 12 * * *'
   workflow_dispatch:
 
@@ -13,32 +13,25 @@ jobs:
   sync_and_upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python Runtime
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Setup Node.js (For Challenge Decryption)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Latest Dependencies & Token Generator
+      - name: Install Python Dependencies & you-get
         run: |
           pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib requests
-          pip install -U --pre "yt-dlp[default]"
-          npm install -g @fshangala/pot-provider || true
+          pip install google-api-python-client google-auth-oauthlib requests you-get
 
-      - name: Run Music Uploader
+      - name: Run Uploader Script
         run: |
           python uploader.py
 
