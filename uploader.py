@@ -1,7 +1,5 @@
 import os
-import glob
 import json
-import subprocess
 import xml.etree.ElementTree as ET
 import requests
 from google.oauth2.credentials import Credentials
@@ -68,36 +66,84 @@ if latest_video_id in uploaded_ids:
     print("Yeh video pehle hi upload ho chuki hai. Process exit.")
     exit(0)
 
-# Purani temporary files clean karna
-download_dir = "downloads"
-os.makedirs(download_dir, exist_ok=True)
-for f in glob.glob(f"{download_dir}/*"):
-    os.remove(f)
+video_file = "downloaded_video.mp4"
+if os.path.exists(video_file):
+    os.remove(video_file)
 
-print("Step 2: you-get tool ke zariye video download shuru...")
+print("Step 2: External Resolver Pipeline ke zariye direct MP4 video download shuru...")
 
-# you-get command execution
-cmd_youget = [
-    "you-get",
-    "-o", download_dir,
-    "-O", "target_video",
-    target_url
+# Active API endpoints list (Jo datacenter bot check ko backend par handle karte hain)
+resolvers = [
+    {"url": "https://cobalt-backend.canine.tools/", "type": "cobalt"},
+    {"url": "https://api.cobalt.tools/", "type": "cobalt"},
+    {"url": "https://cobalt.kiri.dev/", "type": "cobalt"},
+    {"url": "https://loader.to/ajax/download.php", "type": "loader"}
 ]
 
-subprocess.run(cmd_youget, check=True)
+download_success = False
 
-# Downloaded video file dhondna
-downloaded_files = glob.glob(f"{download_dir}/target_video.*")
-# subtitles (.cmt.xml ya .danmaku) ko filter out karna
-video_files = [f for f in downloaded_files if not f.endswith(('.xml', '.json', '.txt'))]
+for r_info in resolvers:
+    endpoint = r_info["url"]
+    r_type = r_info["type"]
+    print(f"Connecting to resolver: {endpoint}...")
+    
+    try:
+        if r_type == "cobalt":
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0"
+            }
+            payload = {
+                "url": target_url,
+                "videoQuality": "720"
+            }
+            c_resp = requests.post(endpoint, headers=headers, json=payload, timeout=20)
+            if c_resp.status_code == 200:
+                res_data = c_resp.json()
+                stream_url = res_data.get("url")
+                if stream_url:
+                    print("Direct MP4 stream link mil gaya. Downloading stream chunks...")
+                    with requests.get(stream_url, stream=True, timeout=90) as stream_req:
+                        stream_req.raise_for_status()
+                        with open(video_file, "wb") as f:
+                            for chunk in stream_req.iter_content(chunk_size=1024 * 1024):
+                                if chunk:
+                                    f.write(chunk)
+                    if os.path.exists(video_file) and os.path.getsize(video_file) > 1000000:
+                        download_success = True
+                        break
 
-if not video_files or os.path.getsize(video_files[0]) < 500000:
-    print("you-get se video download mukammal nahi ho saki.")
+        elif r_type == "loader":
+            l_resp = requests.get(f"{endpoint}?format=720&url={target_url}", timeout=15)
+            if l_resp.status_code == 200:
+                job_id = l_resp.json().get("id")
+                if job_id:
+                    # Poll progress
+                    for _ in range(12):
+                        p_check = requests.get(f"https://loader.to/ajax/progress.php?id={job_id}", timeout=10).json()
+                        if p_check.get("success") == 1 and p_check.get("download_url"):
+                            stream_url = p_check.get("download_url")
+                            with requests.get(stream_url, stream=True, timeout=90) as stream_req:
+                                with open(video_file, "wb") as f:
+                                    for chunk in stream_req.iter_content(chunk_size=1024 * 1024):
+                                        if chunk:
+                                            f.write(chunk)
+                            if os.path.exists(video_file) and os.path.getsize(video_file) > 1000000:
+                                download_success = True
+                            break
+                    if download_success:
+                        break
+    except Exception as e:
+        print(f"Resolver failed ({e}), trying next...")
+        continue
+
+if not download_success or not os.path.exists(video_file) or os.path.getsize(video_file) < 500000:
+    print("Direct video download mukammal nahi ho saka.")
     exit(1)
 
-local_video_file = video_files[0]
-file_size_mb = os.path.getsize(local_video_file) / (1024 * 1024)
-print(f"Downloaded Successfully via you-get! File: {local_video_file} ({file_size_mb:.2f} MB)")
+file_size_mb = os.path.getsize(video_file) / (1024 * 1024)
+print(f"Downloaded Successfully! File Size: {file_size_mb:.2f} MB")
 
 print(f"Step 3: YouTube par PRIVATE upload ho rahi hai: {title}")
 body = {
@@ -112,7 +158,7 @@ body = {
     }
 }
 
-media = MediaFileUpload(local_video_file, chunksize=-1, resumable=True, mimetype='video/mp4')
+media = MediaFileUpload(video_file, chunksize=-1, resumable=True, mimetype='video/mp4')
 upload_req = youtube.videos().insert(
     part=','.join(body.keys()),
     body=body,
@@ -126,6 +172,5 @@ uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-# Cleanup
-for f in glob.glob(f"{download_dir}/*"):
-    os.remove(f)
+if os.path.exists(video_file):
+    os.remove(video_file)
