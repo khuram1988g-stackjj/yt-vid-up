@@ -21,15 +21,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install System Utilities (FFmpeg)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib requests "yt-dlp[default]"
+          pip install google-api-python-client google-auth-oauthlib requests
 
       - name: Run Uploader Script
         run: |
