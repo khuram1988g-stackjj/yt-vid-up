@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import traceback
 import requests
 import urllib3
 import yt_dlp
@@ -99,42 +100,71 @@ output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: yt-dlp download with Chrome Impersonation
-print("\nStep 3: Direct MP4 video stream download ho rahi hai (Chrome Impersonation)...")
+# Step 3: yt-dlp download with Android/iOS client configuration
+print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
 
 ydl_opts = {
     'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best',
     'outtmpl': output_video,
     'merge_output_format': 'mp4',
     'quiet': False,
-    'no_warnings': True,
-    'impersonate': 'chrome',
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1'
-    },
+    'no_warnings': False,
     'extractor_args': {
         'youtube': {
-            'player_client': ['web', 'web_embedded']
+            'player_client': ['android', 'ios']
         }
     }
 }
 
+download_success = False
+
 try:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([target_url])
-except Exception as e:
-    print(f"[-] yt_dlp download notice: {e}")
+    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+        download_success = True
+except Exception:
+    print("[-] yt_dlp Android/iOS client error trace:")
+    traceback.print_exc()
 
-if not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
+# Fallback: Agar local client fail ho, to Invidious public streaming endpoint use karein
+if not download_success:
+    print("\n[+] Primary yt-dlp failed, trying Invidious stream resolver...")
+    invidious_instances = [
+        "https://inv.nadeko.net",
+        "https://invidious.nerdvpn.de",
+        "https://yt.artemislena.eu"
+    ]
+    for inst in invidious_instances:
+        try:
+            api_url = f"{inst}/api/v1/videos/{latest_video_id}"
+            res = requests.get(api_url, timeout=15)
+            if res.status_code == 200:
+                format_streams = res.json().get("formatStreams", [])
+                stream_url = None
+                for s in format_streams:
+                    if s.get("container") == "mp4" and "720p" in s.get("qualityLabel", ""):
+                        stream_url = s.get("url")
+                        break
+                if not stream_url and format_streams:
+                    stream_url = format_streams[-1].get("url")
+                
+                if stream_url:
+                    print(f"[+] Found stream on {inst}, downloading...")
+                    with requests.get(stream_url, stream=True, timeout=120) as dl:
+                        dl.raise_for_status()
+                        with open(output_video, 'wb') as f:
+                            for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                                if chunk:
+                                    f.write(chunk)
+                    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                        download_success = True
+                        break
+        except Exception as e:
+            print(f"[-] Mirror {inst} notice: {e}")
+            continue
+
+if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
     print("Download fail ho gaya. File size too small or missing.")
     exit(1)
 
