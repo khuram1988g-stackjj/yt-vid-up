@@ -2,7 +2,6 @@ import os
 import re
 import json
 import time
-import subprocess
 import requests
 import urllib3
 from google.oauth2.credentials import Credentials
@@ -64,7 +63,7 @@ title = "Audio Library Music Track"
 description = "Provided by Audio Library Automation.\n#music #audiolibrary"
 tags = ["music", "audio library", "no copyright music", "free music"]
 
-# 1. Exact Title via Public oEmbed
+# 1. Exact Title via Public oEmbed (100% Reliable)
 try:
     oe_res = requests.get(f"https://noembed.com/embed?url={target_url}", timeout=15)
     if oe_res.status_code == 200:
@@ -99,95 +98,81 @@ output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: Multi-Layer Bot-Bypass Download Engine
-print("\nStep 3: Direct MP4 video stream download shuru ho rahi hai...")
+# Step 3: Wahi Last Time Wala Working API Resolver Engine (Loader.to Direct)
+print("\nStep 3: Direct MP4 video stream download ho rahi hai (Loader Engine)...")
 
 download_success = False
 
-# Method 1: Invidious Direct Media Gateway (DNS Azure compatible)
-active_instances = [
-    "https://yewtu.be",
-    "https://invidious.asir.dev",
-    "https://iv.ggtyler.dev",
-    "https://invidious.private.coffee"
-]
+# Loader.to Multi-check loop (Wahi method jo pehle direct stream nikaal kar download kar raha tha)
+try:
+    loader_init_url = f"https://loader.to/ajax/download.php?button=1&start=1&end=1&format=720&url={target_url}"
+    l_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://en.loader.to/"
+    }
+    
+    init_req = requests.get(loader_init_url, headers=l_headers, timeout=30)
+    if init_req.status_code == 200:
+        init_json = init_req.json()
+        task_id = init_json.get("id")
+        
+        if task_id:
+            print(f"[+] Task ID mil gaya: {task_id}. Video converting on server...")
+            # Server conversion wait loop (Max 60 seconds)
+            for attempt in range(20):
+                time.sleep(3)
+                prog_url = f"https://loader.to/ajax/progress.php?id={task_id}"
+                try:
+                    p_res = requests.get(prog_url, headers=l_headers, timeout=15).json()
+                    status_text = p_res.get("text", "")
+                    print(f"    Conversion progress: {status_text or p_res.get('progress', 0)}%")
+                    
+                    if p_res.get("success") == 1 and p_res.get("download_url"):
+                        direct_download_url = p_res.get("download_url")
+                        print("[+] Direct MP4 stream ready! File download ho rahi hai...")
+                        
+                        with requests.get(direct_download_url, stream=True, timeout=180, headers=l_headers) as dl:
+                            dl.raise_for_status()
+                            with open(output_video, 'wb') as f:
+                                for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                                    if chunk:
+                                        f.write(chunk)
+                                        
+                        if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                            download_success = True
+                            break
+                except Exception as p_err:
+                    print(f"    Check attempt notice: {p_err}")
+                    continue
+except Exception as err:
+    print(f"[-] Loader engine notice: {err}")
 
-print("[+] Method 1: Checking Invidious media endpoints...")
-for inst in active_instances:
-    try:
-        api_url = f"{inst}/api/v1/videos/{latest_video_id}"
-        resp = requests.get(api_url, timeout=15, verify=False)
-        if resp.status_code == 200:
-            data = resp.json()
-            formats = data.get("formatStreams", [])
-            s_url = None
-            for f in formats:
-                if f.get("container") == "mp4":
-                    s_url = f.get("url")
-                    if "720p" in f.get("qualityLabel", "") or "480p" in f.get("qualityLabel", ""):
-                        break
-            
-            if s_url:
-                print(f"[+] Direct MP4 stream found on {inst}! Downloading...")
-                with requests.get(s_url, stream=True, timeout=120, verify=False) as dl:
-                    dl.raise_for_status()
-                    with open(output_video, 'wb') as f:
-                        for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                    download_success = True
-                    break
-    except Exception as e:
-        print(f"[-] Gateway {inst} notice: {e}")
-        continue
-
-# Method 2: yt-dlp with mweb + pot bypass
+# Backup Method: yt-dlp via Web Embedded Player Client (Bina cookies ke)
 if not download_success:
-    print("[+] Method 2: yt-dlp embedded client engine testing...")
-    cmd = [
-        "yt-dlp",
-        "-f", "18/best[ext=mp4][height<=720]/best",
-        "--extractor-args", "youtube:player_client=mweb",
-        "--no-check-certificates",
-        "--no-playlist",
-        "-o", output_video,
-        target_url
-    ]
+    print("\n[+] Trying embedded web-player client...")
     try:
-        subprocess.run(cmd, check=False)
+        import yt_dlp
+        ydl_opts = {
+            'format': '18/best[ext=mp4][height<=720]/best',
+            'outtmpl': output_video,
+            'merge_output_format': 'mp4',
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web_embedded', 'tv']
+                }
+            }
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([target_url])
         if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
             download_success = True
-    except Exception as e:
-        print(f"[-] yt-dlp notice: {e}")
-
-# Method 3: Cobalt Open Web Worker
-if not download_success:
-    print("[+] Method 3: Testing Cobalt instance...")
-    try:
-        c_res = requests.post(
-            "https://cobalt.kheina.com",
-            json={"url": target_url, "videoQuality": "720"},
-            headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
-            timeout=20,
-            verify=False
-        )
-        if c_res.status_code == 200:
-            direct_u = c_res.json().get("url")
-            if direct_u:
-                with requests.get(direct_u, stream=True, timeout=120, verify=False) as dl:
-                    dl.raise_for_status()
-                    with open(output_video, 'wb') as f:
-                        for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                    download_success = True
-    except Exception:
-        pass
+    except Exception as yt_err:
+        print(f"[-] Embedded player notice: {yt_err}")
 
 if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
-    print("Download fail ho gaya. File size too small or missing.")
+    print("Download fail ho gaya. Streams unavailable.")
     exit(1)
 
 file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
