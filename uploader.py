@@ -2,14 +2,13 @@ import os
 import re
 import json
 import time
-import subprocess
 import requests
 import urllib3
+import yt_dlp
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Disable SSL verification warnings for fallback mirrors
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # OAuth Credentials (Split strings to bypass Secret Scanner)
@@ -62,10 +61,10 @@ if latest_video_id in uploaded_ids:
 print(f"\nStep 2: Video ka exact Title, Description aur Tags fetch ho rahe hain: {latest_video_id}...")
 
 title = "Audio Library Music Track"
-description = f"Provided by Audio Library Automation.\n#music #audiolibrary"
+description = "Provided by Audio Library Automation.\n#music #audiolibrary"
 tags = ["music", "audio library", "no copyright music", "free music"]
 
-# Official Title via Public oEmbed
+# 1. Exact Title via Public oEmbed
 try:
     oe_res = requests.get(f"https://noembed.com/embed?url={target_url}", timeout=15)
     if oe_res.status_code == 200:
@@ -75,7 +74,7 @@ try:
 except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
-# Description aur Tags extraction
+# 2. Description aur Keywords parse
 try:
     vid_page = requests.get(target_url, headers=headers, timeout=20).text
     desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
@@ -90,86 +89,59 @@ try:
 except Exception as e:
     print(f"[-] Web metadata parse notice: {e}")
 
-print("="*60)
+print("=" * 60)
 print(f"Exact Title: {title}")
 print(f"Total Tags ({len(tags)}): {tags[:8]}...")
 print(f"Description Length: {len(description)} chars")
-print("="*60)
+print("=" * 60)
 
 output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: Direct Robust Download Engine (yt-dlp primary + mirror fallback)
-print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
+# Step 3: yt-dlp download with Chrome Impersonation
+print("\nStep 3: Direct MP4 video stream download ho rahi hai (Chrome Impersonation)...")
 
-download_success = False
+ydl_opts = {
+    'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best',
+    'outtmpl': output_video,
+    'merge_output_format': 'mp4',
+    'quiet': False,
+    'no_warnings': True,
+    'impersonate': 'chrome',
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1'
+    },
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['web', 'web_embedded']
+        }
+    }
+}
 
-# Method A: Direct yt-dlp execution (best 720p/mp4 stream)
-print("[+] Method 1: yt-dlp local engine testing...")
 try:
-    cmd = [
-        "yt-dlp",
-        "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
-        "--merge-output-format", "mp4",
-        "--no-playlist",
-        "--extractor-args", "youtube:player_client=android,web",
-        "-o", output_video,
-        target_url
-    ]
-    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-        download_success = True
-        print("[+] Downloaded successfully via yt-dlp engine!")
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([target_url])
 except Exception as e:
-    print(f"[-] yt-dlp error: {e}")
+    print(f"[-] yt_dlp download notice: {e}")
 
-# Method B: Insecure-bypassed multi-mirrors fallback
-if not download_success:
-    print("[+] Method 2: Testing external API fallbacks with SSL-bypass...")
-    api_endpoints = [
-        {"type": "cobalt", "url": "https://capi.oak.li/"},
-        {"type": "cobalt", "url": "https://api.cobalt.tools/"},
-        {"type": "cobalt", "url": "https://cobaltapi.canine.tools/"}
-    ]
-
-    for ep in api_endpoints:
-        ep_url = ep["url"]
-        try:
-            c_headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-            }
-            payload = {
-                "url": target_url,
-                "videoQuality": "720",
-                "filenamePattern": "basic"
-            }
-            resp = requests.post(ep_url, json=payload, headers=c_headers, timeout=20, verify=False)
-            if resp.status_code == 200:
-                stream_url = resp.json().get("url")
-                if stream_url:
-                    with requests.get(stream_url, stream=True, timeout=120, verify=False) as dl:
-                        dl.raise_for_status()
-                        with open(output_video, 'wb') as f:
-                            for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                                if chunk:
-                                    f.write(chunk)
-                    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                        download_success = True
-                        break
-        except Exception as err:
-            continue
-
-if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
-    print("Download fail ho gaya. Streams unavailable.")
+if not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
+    print("Download fail ho gaya. File size too small or missing.")
     exit(1)
 
 file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
-print(f"Video Download Complete! Size: {file_size_mb:.2f} MB")
+print(f"\n[+] Video Download Complete! Size: {file_size_mb:.2f} MB")
 
-# Step 4: YouTube par PRIVATE upload with Exact Metadata
+# Step 4: YouTube par PRIVATE upload with Full Metadata
 print("\nStep 4: YouTube par PRIVATE upload shuru...")
 
 clean_tags = [str(t)[:30] for t in tags[:30]]
@@ -197,7 +169,7 @@ new_id = upload_resp.get("id")
 print(f"\n[+] SUCCESS! Video Private Upload Ho Gayi.")
 print(f"Uploaded Video URL: https://www.youtube.com/watch?v={new_id}")
 
-# State Tracker update
+# State Tracker update (sirf kamyab upload ke baad)
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
