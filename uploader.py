@@ -2,10 +2,8 @@ import os
 import re
 import json
 import time
-import traceback
 import requests
 import urllib3
-import yt_dlp
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -100,58 +98,84 @@ output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: yt-dlp download with Android/iOS client configuration
+# Step 3: Datacenter-Unblocked Streaming Resolvers
 print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
-
-ydl_opts = {
-    'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best',
-    'outtmpl': output_video,
-    'merge_output_format': 'mp4',
-    'quiet': False,
-    'no_warnings': False,
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['android', 'ios']
-        }
-    }
-}
 
 download_success = False
 
-try:
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([target_url])
-    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-        download_success = True
-except Exception:
-    print("[-] yt_dlp Android/iOS client error trace:")
-    traceback.print_exc()
+# Method 1: Piped Video API (Proxied stream URL - Datacenter unblocked)
+piped_instances = [
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.privacydev.net",
+    "https://piped-api.lunar.icu",
+    "https://api.piped.projectsegfau.lt"
+]
 
-# Fallback: Agar local client fail ho, to Invidious public streaming endpoint use karein
-if not download_success:
-    print("\n[+] Primary yt-dlp failed, trying Invidious stream resolver...")
-    invidious_instances = [
-        "https://inv.nadeko.net",
-        "https://invidious.nerdvpn.de",
-        "https://yt.artemislena.eu"
-    ]
-    for inst in invidious_instances:
-        try:
-            api_url = f"{inst}/api/v1/videos/{latest_video_id}"
-            res = requests.get(api_url, timeout=15)
-            if res.status_code == 200:
-                format_streams = res.json().get("formatStreams", [])
-                stream_url = None
-                for s in format_streams:
-                    if s.get("container") == "mp4" and "720p" in s.get("qualityLabel", ""):
+print("[+] Method 1: Piped Streams Resolver testing...")
+for p_inst in piped_instances:
+    try:
+        api_url = f"{p_inst}/streams/{latest_video_id}"
+        resp = requests.get(api_url, timeout=15, verify=False)
+        if resp.status_code == 200:
+            data = resp.json()
+            video_streams = data.get("videoStreams", [])
+            stream_url = None
+            
+            # 720p mp4 stream dhoondna
+            for s in video_streams:
+                if s.get("format") == "MPEG_4" and s.get("quality") in ["720p", "480p", "360p"]:
+                    stream_url = s.get("url")
+                    break
+            
+            if not stream_url and video_streams:
+                for s in video_streams:
+                    if s.get("format") == "MPEG_4":
                         stream_url = s.get("url")
                         break
-                if not stream_url and format_streams:
-                    stream_url = format_streams[-1].get("url")
-                
-                if stream_url:
-                    print(f"[+] Found stream on {inst}, downloading...")
-                    with requests.get(stream_url, stream=True, timeout=120) as dl:
+
+            if stream_url:
+                print(f"[+] Direct stream mil gaya via {p_inst}! Downloading file...")
+                with requests.get(stream_url, stream=True, timeout=120, verify=False) as dl:
+                    dl.raise_for_status()
+                    with open(output_video, 'wb') as f:
+                        for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                    download_success = True
+                    break
+    except Exception as e:
+        print(f"[-] Piped notice ({p_inst}): {e}")
+        continue
+
+# Method 2: Cobalt V10 JSON API
+if not download_success:
+    print("[+] Method 2: Testing Cobalt v10 endpoints...")
+    cobalt_servers = [
+        "https://api.cobalt.tools",
+        "https://capi.oak.li",
+        "https://cobaltapi.canine.tools"
+    ]
+    for c_url in cobalt_servers:
+        try:
+            payload = {
+                "url": target_url,
+                "videoQuality": "720",
+                "filenamePattern": "basic"
+            }
+            c_res = requests.post(
+                c_url,
+                json=payload,
+                headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+                timeout=20,
+                verify=False
+            )
+            if c_res.status_code == 200:
+                data = c_res.json()
+                s_url = data.get("url")
+                if s_url:
+                    print(f"[+] Cobalt stream URL mil gaya via {c_url}! Downloading...")
+                    with requests.get(s_url, stream=True, timeout=120, verify=False) as dl:
                         dl.raise_for_status()
                         with open(output_video, 'wb') as f:
                             for chunk in dl.iter_content(chunk_size=1024 * 1024):
@@ -160,9 +184,32 @@ if not download_success:
                     if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
                         download_success = True
                         break
-        except Exception as e:
-            print(f"[-] Mirror {inst} notice: {e}")
+        except Exception:
             continue
+
+# Method 3: yt-dlp tv_embedded client fallback
+if not download_success:
+    print("[+] Method 3: yt-dlp tv_embedded fallback...")
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best',
+            'outtmpl': output_video,
+            'merge_output_format': 'mp4',
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['tv_embedded', 'mweb']
+                }
+            }
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([target_url])
+        if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+            download_success = True
+    except Exception as e:
+        print(f"[-] yt-dlp tv_embedded notice: {e}")
 
 if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
     print("Download fail ho gaya. File size too small or missing.")
