@@ -63,7 +63,7 @@ title = "Audio Library Music Track"
 description = "Provided by Audio Library Automation.\n#music #audiolibrary"
 tags = ["music", "audio library", "no copyright music", "free music"]
 
-# 1. Exact Title via Public oEmbed (100% Reliable)
+# 1. Exact Title via Public oEmbed
 try:
     oe_res = requests.get(f"https://noembed.com/embed?url={target_url}", timeout=15)
     if oe_res.status_code == 200:
@@ -98,78 +98,113 @@ output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: Wahi Last Time Wala Working API Resolver Engine (Loader.to Direct)
-print("\nStep 3: Direct MP4 video stream download ho rahi hai (Loader Engine)...")
+# Step 3: Zero-Cookie Stream Download Engine
+print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
 
 download_success = False
 
-# Loader.to Multi-check loop (Wahi method jo pehle direct stream nikaal kar download kar raha tha)
-try:
-    loader_init_url = f"https://loader.to/ajax/download.php?button=1&start=1&end=1&format=720&url={target_url}"
-    l_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://en.loader.to/"
-    }
-    
-    init_req = requests.get(loader_init_url, headers=l_headers, timeout=30)
-    if init_req.status_code == 200:
-        init_json = init_req.json()
-        task_id = init_json.get("id")
-        
-        if task_id:
-            print(f"[+] Task ID mil gaya: {task_id}. Video converting on server...")
-            # Server conversion wait loop (Max 60 seconds)
-            for attempt in range(20):
-                time.sleep(3)
-                prog_url = f"https://loader.to/ajax/progress.php?id={task_id}"
-                try:
-                    p_res = requests.get(prog_url, headers=l_headers, timeout=15).json()
-                    status_text = p_res.get("text", "")
-                    print(f"    Conversion progress: {status_text or p_res.get('progress', 0)}%")
-                    
+# Method 1: Cobalt Direct Workers (wuk.sh / imput.net core API)
+cobalt_apis = [
+    "https://api.cobalt.tools",
+    "https://cobalt.tools/api/json",
+    "https://co.wuk.sh/api/json",
+    "https://imput.net/api/json"
+]
+
+for c_api in cobalt_apis:
+    try:
+        print(f"[+] Trying Cobalt Worker: {c_api}")
+        c_head = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+        payload = {
+            "url": target_url,
+            "videoQuality": "720",
+            "filenamePattern": "basic"
+        }
+        res = requests.post(c_api, json=payload, headers=c_head, timeout=20, verify=False)
+        if res.status_code == 200:
+            stream_url = res.json().get("url")
+            if stream_url:
+                print(f"[+] Direct link mil gaya via {c_api}! Downloading MP4...")
+                with requests.get(stream_url, stream=True, timeout=120, verify=False) as dl:
+                    dl.raise_for_status()
+                    with open(output_video, 'wb') as f:
+                        for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                    download_success = True
+                    break
+    except Exception as e:
+        print(f"[-] Worker notice ({c_api}): {e}")
+        continue
+
+# Method 2: Updated Loader.to Endpoint
+if not download_success:
+    print("\n[+] Trying Loader API endpoint...")
+    try:
+        loader_url = "https://loader.to/ajax/download.php"
+        l_params = {
+            "button": "1",
+            "start": "1",
+            "end": "1",
+            "format": "720",
+            "url": target_url
+        }
+        l_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://loader.to/"
+        }
+        init_req = requests.get(loader_url, params=l_params, headers=l_headers, timeout=25)
+        if init_req.status_code == 200:
+            task_id = init_req.json().get("id")
+            if task_id:
+                print(f"[+] Loader Task ID: {task_id}")
+                for _ in range(15):
+                    time.sleep(3)
+                    p_res = requests.get(f"https://loader.to/ajax/progress.php?id={task_id}", headers=l_headers, timeout=15).json()
                     if p_res.get("success") == 1 and p_res.get("download_url"):
-                        direct_download_url = p_res.get("download_url")
-                        print("[+] Direct MP4 stream ready! File download ho rahi hai...")
-                        
-                        with requests.get(direct_download_url, stream=True, timeout=180, headers=l_headers) as dl:
+                        d_url = p_res.get("download_url")
+                        print("[+] Loader stream ready! Downloading...")
+                        with requests.get(d_url, stream=True, timeout=120, headers=l_headers) as dl:
                             dl.raise_for_status()
                             with open(output_video, 'wb') as f:
                                 for chunk in dl.iter_content(chunk_size=1024 * 1024):
                                     if chunk:
                                         f.write(chunk)
-                                        
                         if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
                             download_success = True
-                            break
-                except Exception as p_err:
-                    print(f"    Check attempt notice: {p_err}")
-                    continue
-except Exception as err:
-    print(f"[-] Loader engine notice: {err}")
+                        break
+    except Exception as e:
+        print(f"[-] Loader notice: {e}")
 
-# Backup Method: yt-dlp via Web Embedded Player Client (Bina cookies ke)
+# Method 3: Online YouTube Direct MP4 Fetcher
 if not download_success:
-    print("\n[+] Trying embedded web-player client...")
+    print("\n[+] Trying Direct Web Media Resolver...")
     try:
-        import yt_dlp
-        ydl_opts = {
-            'format': '18/best[ext=mp4][height<=720]/best',
-            'outtmpl': output_video,
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web_embedded', 'tv']
-                }
-            }
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
-        if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-            download_success = True
-    except Exception as yt_err:
-        print(f"[-] Embedded player notice: {yt_err}")
+        api_proxy = f"https://api.vkrdownloader.com/server?v={target_url}"
+        vkr_res = requests.get(api_proxy, timeout=20).json()
+        download_list = vkr_res.get("data", {}).get("downloads", [])
+        m_link = None
+        for d in download_list:
+            if d.get("format_id") in ["18", "22"] or d.get("ext") == "mp4":
+                m_link = d.get("url")
+                break
+        if m_link:
+            print("[+] Direct MP4 found via Web Media Resolver! Downloading...")
+            with requests.get(m_link, stream=True, timeout=120) as dl:
+                dl.raise_for_status()
+                with open(output_video, 'wb') as f:
+                    for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+            if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                download_success = True
+    except Exception as e:
+        print(f"[-] Web media notice: {e}")
 
 if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
     print("Download fail ho gaya. Streams unavailable.")
