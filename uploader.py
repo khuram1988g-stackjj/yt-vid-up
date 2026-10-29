@@ -98,44 +98,75 @@ output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: Datacenter-Unblocked Streaming Resolvers
-print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
+# Step 3: Datacenter Bot-Proof Gateway Resolvers
+print("\nStep 3: Direct MP4 video stream download ho rahi hai via External Gateway...")
 
 download_success = False
 
-# Method 1: Piped Video API (Proxied stream URL - Datacenter unblocked)
-piped_instances = [
-    "https://pipedapi.kavin.rocks",
-    "https://api.piped.privacydev.net",
-    "https://piped-api.lunar.icu",
-    "https://api.piped.projectsegfau.lt"
-]
+# Gateway 1: SSYouTube Core Worker API
+print("[+] Testing SSYouTube API Gateway...")
+try:
+    gw_url = f"https://worker.ssyoutube.com/sf/analyze?url={target_url}"
+    gw_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://ssyoutube.com/"
+    }
+    res = requests.get(gw_url, headers=gw_headers, timeout=20)
+    if res.status_code == 200:
+        links = res.json().get("url", [])
+        stream_url = None
+        for l in links:
+            if l.get("ext") == "mp4" and l.get("quality") in ["720", "480", "360"]:
+                stream_url = l.get("url")
+                break
+        if not stream_url and links:
+            stream_url = links[0].get("url")
+            
+        if stream_url:
+            print("[+] Direct MP4 link resolved! Downloading file...")
+            with requests.get(stream_url, stream=True, timeout=120) as dl:
+                dl.raise_for_status()
+                with open(output_video, 'wb') as f:
+                    for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+            if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                download_success = True
+except Exception as e:
+    print(f"[-] SSYouTube Gateway notice: {e}")
 
-print("[+] Method 1: Piped Streams Resolver testing...")
-for p_inst in piped_instances:
+# Gateway 2: Y2Mate Web API Engine
+if not download_success:
+    print("[+] Testing Y2Mate API Gateway...")
     try:
-        api_url = f"{p_inst}/streams/{latest_video_id}"
-        resp = requests.get(api_url, timeout=15, verify=False)
-        if resp.status_code == 200:
-            data = resp.json()
-            video_streams = data.get("videoStreams", [])
-            stream_url = None
-            
-            # 720p mp4 stream dhoondna
-            for s in video_streams:
-                if s.get("format") == "MPEG_4" and s.get("quality") in ["720p", "480p", "360p"]:
-                    stream_url = s.get("url")
-                    break
-            
-            if not stream_url and video_streams:
-                for s in video_streams:
-                    if s.get("format") == "MPEG_4":
-                        stream_url = s.get("url")
-                        break
+        init_res = requests.post(
+            "https://www.y2mate.com/mates/analyzeV2/ajax",
+            data={"k_query": target_url, "k_page": "home", "hl": "en", "q_auto": 0},
+            headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"},
+            timeout=20
+        ).json()
+        
+        mp4_formats = init_res.get("links", {}).get("mp4", {})
+        vid_token = None
+        for k in ["136", "18", "135", "134", "133"]:
+            if k in mp4_formats:
+                vid_token = mp4_formats[k].get("k")
+                break
+        if not vid_token and mp4_formats:
+            vid_token = list(mp4_formats.values())[0].get("k")
 
-            if stream_url:
-                print(f"[+] Direct stream mil gaya via {p_inst}! Downloading file...")
-                with requests.get(stream_url, stream=True, timeout=120, verify=False) as dl:
+        if vid_token:
+            conv_res = requests.post(
+                "https://www.y2mate.com/mates/convertV2/index",
+                data={"vid": latest_video_id, "k": vid_token},
+                headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"},
+                timeout=20
+            ).json()
+            
+            d_link = conv_res.get("dlink")
+            if d_link:
+                print("[+] Y2Mate Direct stream found! Downloading...")
+                with requests.get(d_link, stream=True, timeout=120) as dl:
                     dl.raise_for_status()
                     with open(output_video, 'wb') as f:
                         for chunk in dl.iter_content(chunk_size=1024 * 1024):
@@ -143,73 +174,33 @@ for p_inst in piped_instances:
                                 f.write(chunk)
                 if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
                     download_success = True
-                    break
     except Exception as e:
-        print(f"[-] Piped notice ({p_inst}): {e}")
-        continue
+        print(f"[-] Y2Mate Gateway notice: {e}")
 
-# Method 2: Cobalt V10 JSON API
+# Gateway 3: Loader Ajax Service
 if not download_success:
-    print("[+] Method 2: Testing Cobalt v10 endpoints...")
-    cobalt_servers = [
-        "https://api.cobalt.tools",
-        "https://capi.oak.li",
-        "https://cobaltapi.canine.tools"
-    ]
-    for c_url in cobalt_servers:
-        try:
-            payload = {
-                "url": target_url,
-                "videoQuality": "720",
-                "filenamePattern": "basic"
-            }
-            c_res = requests.post(
-                c_url,
-                json=payload,
-                headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
-                timeout=20,
-                verify=False
-            )
-            if c_res.status_code == 200:
-                data = c_res.json()
-                s_url = data.get("url")
-                if s_url:
-                    print(f"[+] Cobalt stream URL mil gaya via {c_url}! Downloading...")
-                    with requests.get(s_url, stream=True, timeout=120, verify=False) as dl:
-                        dl.raise_for_status()
-                        with open(output_video, 'wb') as f:
-                            for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                                if chunk:
-                                    f.write(chunk)
-                    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                        download_success = True
-                        break
-        except Exception:
-            continue
-
-# Method 3: yt-dlp tv_embedded client fallback
-if not download_success:
-    print("[+] Method 3: yt-dlp tv_embedded fallback...")
+    print("[+] Testing Loader Ajax Gateway...")
     try:
-        import yt_dlp
-        ydl_opts = {
-            'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best',
-            'outtmpl': output_video,
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['tv_embedded', 'mweb']
-                }
-            }
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
-        if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-            download_success = True
+        l_resp = requests.get(f"https://loader.to/ajax/download.php?format=720&url={target_url}", timeout=15)
+        if l_resp.status_code == 200:
+            task_id = l_resp.json().get("id")
+            if task_id:
+                for _ in range(12):
+                    time.sleep(2)
+                    p_check = requests.get(f"https://loader.to/ajax/progress.php?id={task_id}", timeout=10).json()
+                    if p_check.get("success") == 1 and p_check.get("download_url"):
+                        s_url = p_check.get("download_url")
+                        with requests.get(s_url, stream=True, timeout=120) as dl:
+                            dl.raise_for_status()
+                            with open(output_video, 'wb') as f:
+                                for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                                    if chunk:
+                                        f.write(chunk)
+                        if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+                            download_success = True
+                        break
     except Exception as e:
-        print(f"[-] yt-dlp tv_embedded notice: {e}")
+        print(f"[-] Loader notice: {e}")
 
 if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
     print("Download fail ho gaya. File size too small or missing.")
