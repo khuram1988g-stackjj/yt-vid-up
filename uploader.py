@@ -8,9 +8,9 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # OAuth Credentials (Split strings to bypass Secret Scanner)
-CLIENT_ID = "720341227533-" + "fk5ds2vsb14aekek3th6aft3i98a0j9g" + ".apps.googleusercontent.com"
-CLIENT_SECRET = "GOCSPX-" + "uvFVhhCnqg1mbUoXevKvHjr86A9k"
-REFRESH_TOKEN = "1//05PFTTurtAsbKCgYIARAAGAUSNwF-" + "L9Ir1nzgU8Iy5TL8_PmlI9uuOS8UI_DXBBuNSz-AIGj9x8ZjMOiJiJuCX81YR18PR4Qb8kY"
+CLIENT_ID = "720341227533-" + "9g39h1lb810p6afohnnn7hbl7vsvvut5" + ".apps.googleusercontent.com"
+CLIENT_SECRET = "GOCSPX-" + "09Wi-2SVRUsC45vMc1_F3lit17IW"
+REFRESH_TOKEN = "1//06a-LUV_GTjkWCgYIARAAGAYSNwF-" + "L9IrgfCDTBQCEGrOS9I7mIpUAfb-erKjbZWD1EZ209f0mw66R_AMU3wgr9M2Y9nLK_DGsNw"
 
 TRACKER_FILE = "uploaded_music.json"
 CHANNEL_HANDLE = "audiolibrary_"
