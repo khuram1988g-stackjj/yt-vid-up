@@ -2,8 +2,8 @@ name: Audio Library Sync & Upload
 
 on:
   schedule:
-    - cron: '0 12 * * *' # Rozana automatically chalane ke liye
-  workflow_dispatch:      # Manual 'Run workflow' button ke liye
+    - cron: '0 12 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,7 +20,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install System FFmpeg
         run: |
