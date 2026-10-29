@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import subprocess
 import requests
 import urllib3
 from google.oauth2.credentials import Credentials
@@ -74,6 +75,7 @@ except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
 # 2. Description aur Keywords parse
+vid_page = ""
 try:
     vid_page = requests.get(target_url, headers=headers, timeout=20).text
     desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
@@ -95,123 +97,108 @@ print(f"Description Length: {len(description)} chars")
 print("=" * 60)
 
 output_video = "downloaded_track.mp4"
-if os.path.exists(output_video):
-    os.remove(output_video)
+temp_audio = "audio_track.mp3"
+temp_thumb = "cover.jpg"
 
-# Step 3: Zero-Cookie Stream Download Engine
-print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
+for f_path in [output_video, temp_audio, temp_thumb]:
+    if os.path.exists(f_path):
+        os.remove(f_path)
+
+# Thumbnail download karna (Cover image ke liye)
+thumb_url = f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg"
+th_res = requests.get(thumb_url, headers=headers, timeout=15)
+if th_res.status_code != 200:
+    thumb_url = f"https://i.ytimg.com/vi/{latest_video_id}/hqdefault.jpg"
+    th_res = requests.get(thumb_url, headers=headers, timeout=15)
+
+with open(temp_thumb, "wb") as f:
+    f.write(th_res.content)
+
+# Step 3: Audio Stream Download (Bot-Free Engine)
+print("\nStep 3: Track stream download ho rahi hai...")
 
 download_success = False
 
-# Method 1: Cobalt Direct Workers (wuk.sh / imput.net core API)
-cobalt_apis = [
-    "https://api.cobalt.tools",
-    "https://cobalt.tools/api/json",
-    "https://co.wuk.sh/api/json",
-    "https://imput.net/api/json"
-]
-
-for c_api in cobalt_apis:
+# Option A: Description ke official Free Download link se direct fetch
+download_links = re.findall(r'https?://[^\s<>"]+(?:mediafire|hypeddit|audiolibrary)[^\s<>"]*', description)
+if download_links:
+    print(f"[+] Found official direct track link in description: {download_links[0]}")
     try:
-        print(f"[+] Trying Cobalt Worker: {c_api}")
-        c_head = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        }
-        payload = {
-            "url": target_url,
-            "videoQuality": "720",
-            "filenamePattern": "basic"
-        }
-        res = requests.post(c_api, json=payload, headers=c_head, timeout=20, verify=False)
-        if res.status_code == 200:
-            stream_url = res.json().get("url")
-            if stream_url:
-                print(f"[+] Direct link mil gaya via {c_api}! Downloading MP4...")
-                with requests.get(stream_url, stream=True, timeout=120, verify=False) as dl:
-                    dl.raise_for_status()
-                    with open(output_video, 'wb') as f:
-                        for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                    download_success = True
-                    break
-    except Exception as e:
-        print(f"[-] Worker notice ({c_api}): {e}")
-        continue
-
-# Method 2: Updated Loader.to Endpoint
-if not download_success:
-    print("\n[+] Trying Loader API endpoint...")
-    try:
-        loader_url = "https://loader.to/ajax/download.php"
-        l_params = {
-            "button": "1",
-            "start": "1",
-            "end": "1",
-            "format": "720",
-            "url": target_url
-        }
-        l_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://loader.to/"
-        }
-        init_req = requests.get(loader_url, params=l_params, headers=l_headers, timeout=25)
-        if init_req.status_code == 200:
-            task_id = init_req.json().get("id")
-            if task_id:
-                print(f"[+] Loader Task ID: {task_id}")
-                for _ in range(15):
-                    time.sleep(3)
-                    p_res = requests.get(f"https://loader.to/ajax/progress.php?id={task_id}", headers=l_headers, timeout=15).json()
-                    if p_res.get("success") == 1 and p_res.get("download_url"):
-                        d_url = p_res.get("download_url")
-                        print("[+] Loader stream ready! Downloading...")
-                        with requests.get(d_url, stream=True, timeout=120, headers=l_headers) as dl:
-                            dl.raise_for_status()
-                            with open(output_video, 'wb') as f:
-                                for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                                    if chunk:
-                                        f.write(chunk)
-                        if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                            download_success = True
-                        break
-    except Exception as e:
-        print(f"[-] Loader notice: {e}")
-
-# Method 3: Online YouTube Direct MP4 Fetcher
-if not download_success:
-    print("\n[+] Trying Direct Web Media Resolver...")
-    try:
-        api_proxy = f"https://api.vkrdownloader.com/server?v={target_url}"
-        vkr_res = requests.get(api_proxy, timeout=20).json()
-        download_list = vkr_res.get("data", {}).get("downloads", [])
-        m_link = None
-        for d in download_list:
-            if d.get("format_id") in ["18", "22"] or d.get("ext") == "mp4":
-                m_link = d.get("url")
-                break
-        if m_link:
-            print("[+] Direct MP4 found via Web Media Resolver! Downloading...")
-            with requests.get(m_link, stream=True, timeout=120) as dl:
-                dl.raise_for_status()
-                with open(output_video, 'wb') as f:
-                    for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
+        dl_link = download_links[0]
+        if "mediafire.com" in dl_link:
+            mf_html = requests.get(dl_link, headers=headers, timeout=20).text
+            d_url = re.search(r'aria-label="Download file"\s+href="([^"]+)"', mf_html)
+            if d_url:
+                with requests.get(d_url.group(1), stream=True, timeout=120) as r_dl:
+                    with open(temp_audio, "wb") as f:
+                        for chunk in r_dl.iter_content(chunk_size=1024 * 1024):
                             f.write(chunk)
-            if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                download_success = True
+                if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                    download_success = True
     except Exception as e:
-        print(f"[-] Web media notice: {e}")
+        print(f"[-] Official link parse notice: {e}")
 
-if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
-    print("Download fail ho gaya. Streams unavailable.")
+# Option B: Direct Audio-Stream Extractor via yt-dlp (audio-only streams block nahi hoti)
+if not download_success:
+    print("[+] Extracting direct audio stream via yt-dlp audio extractor...")
+    cmd_audio = [
+        "yt-dlp",
+        "-f", "ba/ba*",
+        "-x",
+        "--audio-format", "mp3",
+        "--extractor-args", "youtube:player_client=ios,android",
+        "-o", temp_audio,
+        target_url
+    ]
+    subprocess.run(cmd_audio, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+        download_success = True
+
+# Option C: Direct Invidious Audio Stream
+if not download_success:
+    print("[+] Trying Public Invidious CDN Stream...")
+    for inv_domain in ["https://inv.nadeko.net", "https://yewtu.be", "https://invidious.jing.rocks"]:
+        try:
+            api_call = f"{inv_domain}/api/v1/videos/{latest_video_id}"
+            r_inv = requests.get(api_call, timeout=15, verify=False)
+            if r_inv.status_code == 200:
+                audio_streams = r_inv.json().get("adaptiveFormats", [])
+                audio_url = None
+                for a in audio_streams:
+                    if "audio" in a.get("type", ""):
+                        audio_url = a.get("url")
+                        break
+                if audio_url:
+                    with requests.get(audio_url, stream=True, timeout=120, verify=False) as a_dl:
+                        with open(temp_audio, "wb") as f:
+                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
+                                f.write(chunk)
+                    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                        download_success = True
+                        break
+        except Exception:
+            continue
+
+# Step 3.1: FFmpeg se High-Quality Video render karna (Image + Audio)
+if download_success:
+    print("[+] Combining HD Cover + Audio into clean 1080p MP4 with FFmpeg...")
+    ffmpeg_cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", temp_thumb,
+        "-i", temp_audio,
+        "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-shortest",
+        "-movflags", "+faststart",
+        output_video
+    ]
+    subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+if not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
+    print("Download fail ho gaya. File size too small or missing.")
     exit(1)
 
 file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
-print(f"\n[+] Video Download Complete! Size: {file_size_mb:.2f} MB")
+print(f"\n[+] Video Ready! Size: {file_size_mb:.2f} MB")
 
 # Step 4: YouTube par PRIVATE upload with Full Metadata
 print("\nStep 4: YouTube par PRIVATE upload shuru...")
@@ -246,5 +233,7 @@ uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-if os.path.exists(output_video):
-    os.remove(output_video)
+# Temporary files safai
+for f_path in [output_video, temp_audio, temp_thumb]:
+    if os.path.exists(f_path):
+        os.remove(f_path)
