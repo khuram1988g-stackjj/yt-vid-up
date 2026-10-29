@@ -2,10 +2,15 @@ import os
 import re
 import json
 import time
+import subprocess
 import requests
+import urllib3
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+
+# Disable SSL verification warnings for fallback mirrors
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # OAuth Credentials (Split strings to bypass Secret Scanner)
 CLIENT_ID = "720341227533-" + "9g39h1lb810p6afohnnn7hbl7vsvvut5" + ".apps.googleusercontent.com"
@@ -15,7 +20,6 @@ REFRESH_TOKEN = "1//06a-LUV_GTjkWCgYIARAAGAYSNwF-" + "L9IrgfCDTBQCEGrOS9I7mIpUAf
 TRACKER_FILE = "uploaded_music.json"
 CHANNEL_HANDLE = "audiolibrary_"
 
-# Sirf upload scope use hoga taake koi scope error na aaye
 creds = Credentials(
     None,
     refresh_token=REFRESH_TOKEN,
@@ -61,7 +65,7 @@ title = "Audio Library Music Track"
 description = f"Provided by Audio Library Automation.\n#music #audiolibrary"
 tags = ["music", "audio library", "no copyright music", "free music"]
 
-# 1. Official Title via Public oEmbed (Zero Authentication Required - 100% Reliable)
+# Official Title via Public oEmbed
 try:
     oe_res = requests.get(f"https://noembed.com/embed?url={target_url}", timeout=15)
     if oe_res.status_code == 200:
@@ -71,16 +75,13 @@ try:
 except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
-# 2. Description aur Tags extraction
+# Description aur Tags extraction
 try:
     vid_page = requests.get(target_url, headers=headers, timeout=20).text
-    
-    # Description parsing
     desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
     if desc_match:
         description = desc_match.group(1).encode('utf-8').decode('unicode-escape')
     
-    # Keywords / Tags parsing
     kw_match = re.search(r'\"keywords\":\s*(\[.*?\])', vid_page)
     if kw_match:
         extracted_tags = json.loads(kw_match.group(1))
@@ -99,26 +100,42 @@ output_video = "downloaded_track.mp4"
 if os.path.exists(output_video):
     os.remove(output_video)
 
-# Step 3: Multi-Server API Download Engine
+# Step 3: Direct Robust Download Engine (yt-dlp primary + mirror fallback)
 print("\nStep 3: Direct MP4 video stream download ho rahi hai...")
-
-api_endpoints = [
-    {"type": "cobalt", "url": "https://capi.oak.li/"},
-    {"type": "cobalt", "url": "https://api.co.rooot.gay/"},
-    {"type": "cobalt", "url": "https://cobalt-api.hyper.lol/"},
-    {"type": "cobalt", "url": "https://cobalt.synzr.space/"},
-    {"type": "loader", "url": "https://loader.to/ajax/download.php"}
-]
 
 download_success = False
 
-for ep in api_endpoints:
-    ep_url = ep["url"]
-    ep_type = ep["type"]
-    print(f"Testing download server: {ep_url}")
+# Method A: Direct yt-dlp execution (best 720p/mp4 stream)
+print("[+] Method 1: yt-dlp local engine testing...")
+try:
+    cmd = [
+        "yt-dlp",
+        "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "--extractor-args", "youtube:player_client=android,web",
+        "-o", output_video,
+        target_url
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
+        download_success = True
+        print("[+] Downloaded successfully via yt-dlp engine!")
+except Exception as e:
+    print(f"[-] yt-dlp error: {e}")
 
-    try:
-        if ep_type == "cobalt":
+# Method B: Insecure-bypassed multi-mirrors fallback
+if not download_success:
+    print("[+] Method 2: Testing external API fallbacks with SSL-bypass...")
+    api_endpoints = [
+        {"type": "cobalt", "url": "https://capi.oak.li/"},
+        {"type": "cobalt", "url": "https://api.cobalt.tools/"},
+        {"type": "cobalt", "url": "https://cobaltapi.canine.tools/"}
+    ]
+
+    for ep in api_endpoints:
+        ep_url = ep["url"]
+        try:
             c_headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -127,16 +144,13 @@ for ep in api_endpoints:
             payload = {
                 "url": target_url,
                 "videoQuality": "720",
-                "vQuality": "720",
                 "filenamePattern": "basic"
             }
-            resp = requests.post(ep_url, json=payload, headers=c_headers, timeout=25)
+            resp = requests.post(ep_url, json=payload, headers=c_headers, timeout=20, verify=False)
             if resp.status_code == 200:
-                data = resp.json()
-                stream_url = data.get("url")
+                stream_url = resp.json().get("url")
                 if stream_url:
-                    print("Direct stream URL mil gaya! Downloading file...")
-                    with requests.get(stream_url, stream=True, timeout=120) as dl:
+                    with requests.get(stream_url, stream=True, timeout=120, verify=False) as dl:
                         dl.raise_for_status()
                         with open(output_video, 'wb') as f:
                             for chunk in dl.iter_content(chunk_size=1024 * 1024):
@@ -145,31 +159,8 @@ for ep in api_endpoints:
                     if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
                         download_success = True
                         break
-
-        elif ep_type == "loader":
-            l_resp = requests.get(f"{ep_url}?format=720&url={target_url}", timeout=15)
-            if l_resp.status_code == 200:
-                task_id = l_resp.json().get("id")
-                if task_id:
-                    for _ in range(12):
-                        time.sleep(2)
-                        p_check = requests.get(f"https://loader.to/ajax/progress.php?id={task_id}", timeout=10).json()
-                        if p_check.get("success") == 1 and p_check.get("download_url"):
-                            stream_url = p_check.get("download_url")
-                            with requests.get(stream_url, stream=True, timeout=120) as dl:
-                                dl.raise_for_status()
-                                with open(output_video, 'wb') as f:
-                                    for chunk in dl.iter_content(chunk_size=1024 * 1024):
-                                        if chunk:
-                                            f.write(chunk)
-                            if os.path.exists(output_video) and os.path.getsize(output_video) > 500000:
-                                download_success = True
-                            break
-                    if download_success:
-                        break
-    except Exception as err:
-        print(f"Server {ep_url} notice: {err}, switching to next...")
-        continue
+        except Exception as err:
+            continue
 
 if not download_success or not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
     print("Download fail ho gaya. Streams unavailable.")
