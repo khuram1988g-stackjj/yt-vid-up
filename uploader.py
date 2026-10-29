@@ -41,7 +41,8 @@ else:
 print("Step 1: Audio Library channel ki latest video ID scan ho rahi hai...")
 
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9"
 }
 channel_url = f"https://www.youtube.com/@{CHANNEL_HANDLE}/videos"
 r = requests.get(channel_url, headers=headers, timeout=25)
@@ -74,21 +75,31 @@ try:
 except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
-# 2. Description aur Keywords parse
-vid_page = ""
+# 2. Full Description extraction via Embed Page (bypasses bot verification)
 try:
-    vid_page = requests.get(target_url, headers=headers, timeout=20).text
-    desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
-    if desc_match:
-        description = desc_match.group(1).encode('utf-8').decode('unicode-escape')
+    embed_url = f"https://www.youtube.com/embed/{latest_video_id}"
+    embed_html = requests.get(embed_url, headers=headers, timeout=20).text
     
-    kw_match = re.search(r'\"keywords\":\s*(\[.*?\])', vid_page)
-    if kw_match:
-        extracted_tags = json.loads(kw_match.group(1))
-        if extracted_tags:
-            tags = extracted_tags
+    # Check ytInitialPlayerResponse in embed
+    player_match = re.search(r'ytInitialPlayerResponse\s*=\s*({.+?});', embed_html)
+    if player_match:
+        p_json = json.loads(player_match.group(1))
+        details = p_json.get("videoDetails", {})
+        if details.get("shortDescription"):
+            description = details["shortDescription"]
+        if details.get("keywords"):
+            tags = details["keywords"]
+    
+    if len(description) < 100:
+        vid_page = requests.get(target_url, headers=headers, timeout=20).text
+        desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
+        if desc_match:
+            description = desc_match.group(1).encode('utf-8').decode('unicode-escape')
+        kw_match = re.search(r'\"keywords\":\s*(\[.*?\])', vid_page)
+        if kw_match:
+            tags = json.loads(kw_match.group(1))
 except Exception as e:
-    print(f"[-] Web metadata parse notice: {e}")
+    print(f"[-] Metadata extraction notice: {e}")
 
 print("=" * 60)
 print(f"Exact Title: {title}")
@@ -104,7 +115,7 @@ for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
 
-# Thumbnail download karna (Cover image ke liye)
+# Download Cover Thumbnail
 thumb_url = f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg"
 th_res = requests.get(thumb_url, headers=headers, timeout=15)
 if th_res.status_code != 200:
@@ -114,74 +125,60 @@ if th_res.status_code != 200:
 with open(temp_thumb, "wb") as f:
     f.write(th_res.content)
 
-# Step 3: Audio Stream Download (Bot-Free Engine)
+# Step 3: Stream Download
 print("\nStep 3: Track stream download ho rahi hai...")
 
 download_success = False
 
-# Option A: Description ke official Free Download link se direct fetch
-download_links = re.findall(r'https?://[^\s<>"]+(?:mediafire|hypeddit|audiolibrary)[^\s<>"]*', description)
-if download_links:
-    print(f"[+] Found official direct track link in description: {download_links[0]}")
-    try:
-        dl_link = download_links[0]
-        if "mediafire.com" in dl_link:
-            mf_html = requests.get(dl_link, headers=headers, timeout=20).text
-            d_url = re.search(r'aria-label="Download file"\s+href="([^"]+)"', mf_html)
-            if d_url:
-                with requests.get(d_url.group(1), stream=True, timeout=120) as r_dl:
-                    with open(temp_audio, "wb") as f:
-                        for chunk in r_dl.iter_content(chunk_size=1024 * 1024):
-                            f.write(chunk)
-                if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-                    download_success = True
-    except Exception as e:
-        print(f"[-] Official link parse notice: {e}")
-
-# Option B: Direct Audio-Stream Extractor via yt-dlp (audio-only streams block nahi hoti)
-if not download_success:
-    print("[+] Extracting direct audio stream via yt-dlp audio extractor...")
-    cmd_audio = [
-        "yt-dlp",
-        "-f", "ba/ba*",
-        "-x",
-        "--audio-format", "mp3",
-        "--extractor-args", "youtube:player_client=ios,android",
-        "-o", temp_audio,
-        target_url
-    ]
-    subprocess.run(cmd_audio, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# Method 1: yt-dlp with WEB_CREATOR & TV clients (Azure bot-bypass clients)
+print("[+] Method 1: yt-dlp Studio/Creator Client testing...")
+cmd_ytdlp = [
+    "yt-dlp",
+    "-f", "ba[ext=m4a]/ba/b",
+    "--extract-audio",
+    "--audio-format", "mp3",
+    "--extractor-args", "youtube:player_client=web_creator,tv",
+    "--no-check-certificates",
+    "-o", temp_audio,
+    target_url
+]
+try:
+    subprocess.run(cmd_ytdlp, timeout=90)
     if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
         download_success = True
+        print("[+] Downloaded successfully via web_creator client!")
+except Exception as e:
+    print(f"[-] web_creator notice: {e}")
 
-# Option C: Direct Invidious Audio Stream
+# Method 2: Official Description Download Link (MediaFire / Direct)
 if not download_success:
-    print("[+] Trying Public Invidious CDN Stream...")
-    for inv_domain in ["https://inv.nadeko.net", "https://yewtu.be", "https://invidious.jing.rocks"]:
-        try:
-            api_call = f"{inv_domain}/api/v1/videos/{latest_video_id}"
-            r_inv = requests.get(api_call, timeout=15, verify=False)
-            if r_inv.status_code == 200:
-                audio_streams = r_inv.json().get("adaptiveFormats", [])
-                audio_url = None
-                for a in audio_streams:
-                    if "audio" in a.get("type", ""):
-                        audio_url = a.get("url")
-                        break
-                if audio_url:
-                    with requests.get(audio_url, stream=True, timeout=120, verify=False) as a_dl:
+    print("[+] Method 2: Parsing official track download links from description...")
+    urls_in_desc = re.findall(r'https?://[^\s<>"]+', description)
+    for u in urls_in_desc:
+        if "mediafire.com" in u:
+            try:
+                print(f"    Fetching MediaFire: {u}")
+                mf_page = requests.get(u, headers=headers, timeout=20).text
+                mf_direct = re.search(r'aria-label="Download file"\s+href="([^"]+)"', mf_page)
+                if not mf_direct:
+                    mf_direct = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', mf_page)
+                if mf_direct:
+                    link = mf_direct.group(1)
+                    if link.startswith("//"):
+                        link = "https:" + link
+                    with requests.get(link, stream=True, timeout=120) as r_dl:
                         with open(temp_audio, "wb") as f:
-                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
+                            for chunk in r_dl.iter_content(chunk_size=1024 * 1024):
                                 f.write(chunk)
                     if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
                         download_success = True
                         break
-        except Exception:
-            continue
+            except Exception as e:
+                print(f"    [-] MediaFire error: {e}")
 
-# Step 3.1: FFmpeg se High-Quality Video render karna (Image + Audio)
+# Step 3.1: Combine Thumbnail + Audio into 1080p MP4 using FFmpeg
 if download_success:
-    print("[+] Combining HD Cover + Audio into clean 1080p MP4 with FFmpeg...")
+    print("[+] Combining HD Cover + Audio into clean MP4 with FFmpeg...")
     ffmpeg_cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-i", temp_thumb,
@@ -194,7 +191,7 @@ if download_success:
     subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 if not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
-    print("Download fail ho gaya. File size too small or missing.")
+    print("Download fail ho gaya. Streams unavailable.")
     exit(1)
 
 file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
@@ -233,7 +230,7 @@ uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-# Temporary files safai
+# Cleanup
 for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
