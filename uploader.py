@@ -45,16 +45,16 @@ headers = {
     "Accept-Language": "en-US,en;q=0.9"
 }
 
-# Channel RSS Feed se 100% accurate video list aur titles bina kisi block ke milte hain
-channel_rss = f"https://www.youtube.com/feeds/videos.xml?channel_id=UCht8qITGkBvXKsR1Byln-wA"
+# Channel RSS Feed se fresh latest video ID
+channel_rss = "https://www.youtube.com/feeds/videos.xml?channel_id=UCht8qITGkBvXKsR1Byln-wA"
+video_ids = []
 try:
     rss_resp = requests.get(channel_rss, headers=headers, timeout=20)
     video_ids = re.findall(r'<yt:videoId>([a-zA-Z0-9_-]{11})</yt:videoId>', rss_resp.text)
-except Exception:
-    video_ids = []
+except Exception as e:
+    print(f"[-] RSS feed notice: {e}")
 
 if not video_ids:
-    # Fallback to web search
     channel_url = f"https://www.youtube.com/@{CHANNEL_HANDLE}/videos"
     r = requests.get(channel_url, headers=headers, timeout=25)
     video_ids = re.findall(r'\"videoId\":\"([a-zA-Z0-9_-]{11})\"', r.text)
@@ -76,7 +76,7 @@ title = "Audio Library Music Track"
 description = "Provided by Audio Library Automation.\n#music #audiolibrary"
 tags = ["music", "audio library", "no copyright music", "free music"]
 
-# Exact Title via oEmbed
+# 1. Exact Title via Public oEmbed
 try:
     oe_res = requests.get(f"https://noembed.com/embed?url={target_url}", timeout=15)
     if oe_res.status_code == 200:
@@ -86,19 +86,14 @@ try:
 except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
-# Full Description via YouTube Web Scrape (ytInitialData parser)
+# 2. Asli Full Description (shortDescription parser)
 vid_page = requests.get(target_url, headers=headers, timeout=25).text
 try:
-    # Full Description parsing from structured JSON inside page
-    full_desc_match = re.search(r'\"description\":\{\"simpleText\":\"(.*?)\"\}', vid_page)
-    if full_desc_match:
-        description = full_desc_match.group(1).encode('utf-8').decode('unicode-escape')
-    else:
-        # Runs array parsing
-        runs_desc = re.findall(r'\"runs\":\[\{\"text\":\"(.*?)\"\}\]', vid_page)
-        if runs_desc:
-            description = runs_desc[0].encode('utf-8').decode('unicode-escape')
-            
+    # YouTube page mein shortDescription hi poori description rakhta hai
+    desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
+    if desc_match:
+        description = desc_match.group(1).encode('utf-8').decode('unicode-escape')
+    
     kw_match = re.search(r'\"keywords\":\s*(\[.*?\])', vid_page)
     if kw_match:
         extracted_tags = json.loads(kw_match.group(1))
@@ -136,79 +131,85 @@ print("\nStep 3: Track stream download shuru...")
 
 download_success = False
 
-# Method 1: Official Free Download Link from Description (MediaFire / Hypeddit / Cloud)
-print("[+] Method 1: Looking for direct artist download links in description...")
-all_links = re.findall(r'https?://[^\s<>"]+', description)
-for link in all_links:
-    link = link.rstrip('\\').rstrip('.').rstrip(')')
-    if "mediafire.com" in link:
-        print(f"    Found MediaFire link: {link}")
+# Method 1: Official Free Download Link from Description (Zero-Bot Guarantee)
+print("[+] Method 1: Description se official artist download links check ho rahe hain...")
+urls_in_desc = re.findall(r'https?://[^\s<>"]+', description)
+clean_urls = [u.rstrip('\\').rstrip('.').rstrip(')').rstrip(';') for u in urls_in_desc]
+
+for link in clean_urls:
+    if any(k in link.lower() for k in ["mediafire", "hypeddit", "soundcloud", "audiolibrary", "bit.ly", "tinyurl"]):
+        print(f"    Testing link: {link}")
         try:
-            mf_res = requests.get(link, headers=headers, timeout=20).text
-            dl_btn = re.search(r'aria-label="Download file"\s+href="([^"]+)"', mf_res)
-            if not dl_btn:
-                dl_btn = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', mf_res)
-            if dl_btn:
-                dl_url = dl_btn.group(1)
-                if dl_url.startswith("//"):
-                    dl_url = "https:" + dl_url
-                print(f"    Downloading original MP3 from MediaFire...")
-                with requests.get(dl_url, stream=True, timeout=120) as mf_dl:
-                    with open(temp_audio, "wb") as f:
-                        for chunk in mf_dl.iter_content(chunk_size=1024 * 1024):
-                            f.write(chunk)
+            # Resolve redirects
+            head_res = requests.get(link, headers=headers, timeout=15, allow_redirects=True)
+            final_url = head_res.url
+            
+            # Agar MediaFire link mila
+            if "mediafire.com" in final_url:
+                print(f"    MediaFire resolved: {final_url}")
+                mf_direct = re.search(r'aria-label="Download file"\s+href="([^"]+)"', head_res.text)
+                if not mf_direct:
+                    mf_direct = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', head_res.text)
+                if mf_direct:
+                    dl_url = mf_direct.group(1)
+                    if dl_url.startswith("//"):
+                        dl_url = "https:" + dl_url
+                    print("    Downloading original MP3 from MediaFire...")
+                    with requests.get(dl_url, stream=True, timeout=120) as mf_dl:
+                        with open(temp_audio, "wb") as f:
+                            for chunk in mf_dl.iter_content(chunk_size=1024 * 1024):
+                                f.write(chunk)
+                    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                        download_success = True
+                        break
+
+            # Agar SoundCloud link mila (SoundCloud Azure par block nahi hota)
+            elif "soundcloud.com" in final_url and "/sets/" not in final_url:
+                print(f"    SoundCloud resolved: {final_url}")
+                sc_cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", temp_audio, final_url]
+                subprocess.run(sc_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
                     download_success = True
                     break
-        except Exception as e:
-            print(f"    [-] MediaFire error: {e}")
-
-# Method 2: Public YouTube MP3 Proxy API (Azure Datacenter unblocked)
-if not download_success:
-    print("[+] Method 2: Testing Public Audio Gateways...")
-    api_list = [
-        f"https://api.vevioz.com/api/button/mp3/{latest_video_id}",
-        f"https://invidious.jing.rocks/api/v1/videos/{latest_video_id}",
-        f"https://inv.tux.pizza/api/v1/videos/{latest_video_id}"
-    ]
-    for api_url in api_list:
-        try:
-            if "api/v1/videos" in api_url:
-                r_inv = requests.get(api_url, timeout=15, verify=False)
-                if r_inv.status_code == 200:
-                    formats = r_inv.json().get("adaptiveFormats", [])
-                    audio_target = None
-                    for fmt in formats:
-                        if "audio" in fmt.get("type", ""):
-                            audio_target = fmt.get("url")
-                            break
-                    if audio_target:
-                        print(f"    Downloading audio from Invidious CDN...")
-                        with requests.get(audio_target, stream=True, timeout=120, verify=False) as a_dl:
-                            with open(temp_audio, "wb") as f:
-                                for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
-                                    f.write(chunk)
-                        if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-                            download_success = True
-                            break
-        except Exception:
+        except Exception as l_err:
+            print(f"    [-] Link resolve notice: {l_err}")
             continue
 
-# Method 3: Direct fallback via curl with custom bypass headers
+# Method 2: Dynamic Live Healthy Invidious API instances
 if not download_success:
-    print("[+] Method 3: Direct curl stream fetch...")
-    # YouTube audio stream direct fetch
-    cmd = [
-        "yt-dlp",
-        "-f", "bestaudio",
-        "-o", temp_audio,
-        "--extractor-args", "youtube:player_client=mediaconnect",
-        "--no-check-certificates",
-        target_url
-    ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-        download_success = True
+    print("[+] Method 2: Fetching live healthy Invidious instances...")
+    try:
+        inv_list_res = requests.get("https://api.invidious.io/instances.json?sort_by=health", timeout=15).json()
+        active_mirrors = [
+            f"https://{item[0]}" for item in inv_list_res 
+            if isinstance(item, list) and len(item) > 1 and item[1].get("type") == "https"
+        ][:5]
+    except Exception:
+        active_mirrors = ["https://yewtu.be", "https://inv.nadeko.net", "https://invidious.nerdvpn.de"]
+
+    for inst_url in active_mirrors:
+        try:
+            print(f"    Checking mirror: {inst_url}")
+            api_endpoint = f"{inst_url}/api/v1/videos/{latest_video_id}"
+            inv_res = requests.get(api_endpoint, timeout=15, verify=False)
+            if inv_res.status_code == 200:
+                audio_formats = inv_res.json().get("adaptiveFormats", [])
+                stream_url = None
+                for af in audio_formats:
+                    if "audio" in af.get("type", ""):
+                        stream_url = af.get("url")
+                        break
+                if stream_url:
+                    print("    Downloading audio stream...")
+                    with requests.get(stream_url, stream=True, timeout=120, verify=False) as a_dl:
+                        with open(temp_audio, "wb") as f:
+                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
+                                f.write(chunk)
+                    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                        download_success = True
+                        break
+        except Exception:
+            continue
 
 # Step 3.1: Combine Cover Image + Audio into 1080p MP4
 if download_success:
@@ -264,7 +265,7 @@ uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-# Temporary files safai
+# Cleanup
 for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
