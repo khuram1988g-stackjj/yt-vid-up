@@ -11,7 +11,7 @@ from googleapiclient.http import MediaFileUpload
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# OAuth Credentials (Environment Variables priority, split strings as fallback)
+# OAuth Credentials
 CLIENT_ID = os.environ.get("YT_CLIENT_ID") or ("720341227533-" + "9g39h1lb810p6afohnnn7hbl7vsvvut5" + ".apps.googleusercontent.com")
 CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET") or ("GOCSPX-" + "09Wi-2SVRUsC45vMc1_F3lit17IW")
 REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN") or ("1//06a-LUV_GTjkWCgYIARAAGAYSNwF-" + "L9IrgfCDTBQCEGrOS9I7mIpUAfb-erKjbZWD1EZ209f0mw66R_AMU3wgr9M2Y9nLK_DGsNw")
@@ -111,7 +111,7 @@ try:
 except Exception as e:
     print(f"[-] YouTubei Web player API notice: {e}")
 
-# Agar API se choti mile to RSS Description check karein
+# Fallback Description via RSS
 if len(description) < 150 and rss_content:
     try:
         desc_matches = re.findall(r'<media:description>([\s\S]*?)</media:description>', rss_content)
@@ -134,7 +134,7 @@ for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
 
-# Download High-Resolution Cover Thumbnail
+# Download Cover Thumbnail
 thumb_url = f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg"
 th_res = requests.get(thumb_url, headers=headers, timeout=15)
 if th_res.status_code != 200:
@@ -144,9 +144,7 @@ if th_res.status_code != 200:
 with open(temp_thumb, "wb") as f:
     f.write(th_res.content)
 
-# ==========================================
 # Step 3: Track Audio Download Engine
-# ==========================================
 print("\nStep 3: Track stream download shuru...")
 
 download_success = False
@@ -157,7 +155,7 @@ urls_in_desc = re.findall(r'https?://[^\s<>"]+', description)
 clean_urls = [u.rstrip('\\').rstrip('.').rstrip(')').rstrip(';') for u in urls_in_desc]
 
 for link in clean_urls:
-    if "mediafire.com" in link.lower() or "bit.ly" in link.lower() or "tinyurl" in link.lower():
+    if any(k in link.lower() for k in ["mediafire.com", "bit.ly", "tinyurl"]):
         try:
             head_res = requests.get(link, headers=headers, timeout=15, allow_redirects=True)
             final_url = head_res.url
@@ -182,9 +180,9 @@ for link in clean_urls:
         except Exception as l_err:
             print(f"    [-] Link resolve notice: {l_err}")
 
-# Method 2: yt-dlp Direct Stream Extraction (Fastest & 100% Reliable Fallback)
+# Method 2: yt-dlp Direct Stream (Mobile Client Emulation to bypass bot check)
 if not download_success:
-    print("[+] Method 2: Description se download nahi mila. yt-dlp direct stream download...")
+    print("[+] Method 2: yt-dlp direct stream download (Mobile Client mode)...")
     try:
         base_audio = temp_audio.rsplit('.', 1)[0]
         ytdl_cmd = [
@@ -194,20 +192,29 @@ if not download_success:
             "--audio-quality", "192K",
             "--force-overwrites",
             "--no-playlist",
+            "--extractor-args", "youtube:player_client=android,mweb",
+            "--no-check-certificates",
             "-o", f"{base_audio}.%(ext)s",
             target_url
         ]
-        subprocess.run(ytdl_cmd, check=True)
-        
+
+        if os.path.exists("cookies.txt"):
+            print("    Using cookies.txt for authentication...")
+            ytdl_cmd.extend(["--cookies", "cookies.txt"])
+
+        res = subprocess.run(ytdl_cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"    [-] yt-dlp notice: {res.stderr.strip()[:300]}")
+
         if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
             print(f"    [+] yt-dlp audio extract complete: {os.path.getsize(temp_audio)} bytes")
             download_success = True
     except Exception as yt_err:
-        print(f"    [-] yt-dlp extraction failed: {yt_err}")
+        print(f"    [-] yt-dlp execution error: {yt_err}")
 
-# Method 3: Cobalt API Fallback (v10 API Structure)
+# Method 3: Cobalt API Fallback
 if not download_success:
-    print("[+] Method 3: Testing Cobalt v10 Tunnel...")
+    print("[+] Method 3: Testing Cobalt Audio Tunnel...")
     cobalt_servers = [
         "https://api.cobalt.tools",
         "https://capi.oak.li"
@@ -233,7 +240,7 @@ if not download_success:
                 data = c_res.json()
                 audio_link = data.get("url")
                 if audio_link:
-                    print(f"    Downloading from Cobalt instance ({c_srv})...")
+                    print(f"    Downloading from Cobalt tunnel ({c_srv})...")
                     with requests.get(audio_link, stream=True, timeout=120) as a_dl:
                         with open(temp_audio, "wb") as f:
                             for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
@@ -265,9 +272,7 @@ if not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
 file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
 print(f"\n[+] Video Ready! Size: {file_size_mb:.2f} MB")
 
-# ==========================================
-# Step 4: YouTube par PRIVATE upload
-# ==========================================
+# Step 4: YouTube par PRIVATE upload with Full Metadata
 print("\nStep 4: YouTube par PRIVATE upload shuru...")
 
 clean_tags = [str(t)[:30] for t in tags[:30]]
@@ -277,7 +282,7 @@ body = {
         'title': title[:100],
         'description': description[:5000],
         'tags': clean_tags,
-        'categoryId': '10'  # Music category
+        'categoryId': '10'
     },
     'status': {
         'privacyStatus': 'private'
@@ -295,7 +300,7 @@ new_id = upload_resp.get("id")
 print(f"\n[+] SUCCESS! Video Private Upload Ho Gayi.")
 print(f"Uploaded Video URL: https://www.youtube.com/watch?v={new_id}")
 
-# State Tracker update (sirf kamyab upload ke baad)
+# State Tracker update
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
