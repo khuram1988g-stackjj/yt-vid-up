@@ -180,9 +180,48 @@ for link in clean_urls:
         except Exception as l_err:
             print(f"    [-] Link resolve notice: {l_err}")
 
-# Method 2: yt-dlp Direct Stream (Mobile Client Emulation to bypass bot check)
+# Method 2: Piped / Invidious API Proxies (No Bot-Block on GitHub Actions)
 if not download_success:
-    print("[+] Method 2: yt-dlp direct stream download (Mobile Client mode)...")
+    print("[+] Method 2: Testing Piped/Invidious proxy streams...")
+    piped_apis = [
+        f"https://pipedapi.kavin.rocks/streams/{latest_video_id}",
+        f"https://api.piped.privacydev.net/streams/{latest_video_id}",
+        f"https://piped-api.lunar.icu/streams/{latest_video_id}"
+    ]
+    for p_api in piped_apis:
+        try:
+            p_res = requests.get(p_api, headers=headers, timeout=12)
+            if p_res.status_code == 200:
+                audio_streams = p_res.json().get("audioStreams", [])
+                if audio_streams:
+                    # Select best quality audio stream
+                    best_stream = sorted(audio_streams, key=lambda x: x.get("bitrate", 0), reverse=True)[0]
+                    stream_url = best_stream.get("url")
+                    if stream_url:
+                        print(f"    Piped stream direct download: {best_stream.get('format', 'audio')} ({best_stream.get('bitrate', 0)} bps)...")
+                        dl_res = requests.get(stream_url, stream=True, timeout=120)
+                        raw_temp = "raw_stream_audio"
+                        with open(raw_temp, "wb") as f:
+                            for chunk in dl_res.iter_content(chunk_size=1024 * 1024):
+                                f.write(chunk)
+                        
+                        # Convert to standard MP3 via ffmpeg
+                        subprocess.run([
+                            "ffmpeg", "-y", "-i", raw_temp, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", temp_audio
+                        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        
+                        if os.path.exists(raw_temp):
+                            os.remove(raw_temp)
+                            
+                        if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                            download_success = True
+                            break
+        except Exception as p_err:
+            continue
+
+# Method 3: yt-dlp Direct Stream (With cookies if present)
+if not download_success:
+    print("[+] Method 3: yt-dlp direct stream download...")
     try:
         base_audio = temp_audio.rsplit('.', 1)[0]
         ytdl_cmd = [
@@ -192,64 +231,23 @@ if not download_success:
             "--audio-quality", "192K",
             "--force-overwrites",
             "--no-playlist",
-            "--extractor-args", "youtube:player_client=android,mweb",
-            "--no-check-certificates",
             "-o", f"{base_audio}.%(ext)s",
             target_url
         ]
 
         if os.path.exists("cookies.txt"):
-            print("    Using cookies.txt for authentication...")
+            print("    [!] Using cookies.txt for authentication...")
             ytdl_cmd.extend(["--cookies", "cookies.txt"])
 
         res = subprocess.run(ytdl_cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"    [-] yt-dlp notice: {res.stderr.strip()[:300]}")
+            print(f"    [-] yt-dlp notice: {res.stderr.strip()[:200]}")
 
         if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
             print(f"    [+] yt-dlp audio extract complete: {os.path.getsize(temp_audio)} bytes")
             download_success = True
     except Exception as yt_err:
         print(f"    [-] yt-dlp execution error: {yt_err}")
-
-# Method 3: Cobalt API Fallback
-if not download_success:
-    print("[+] Method 3: Testing Cobalt Audio Tunnel...")
-    cobalt_servers = [
-        "https://api.cobalt.tools",
-        "https://capi.oak.li"
-    ]
-    for c_srv in cobalt_servers:
-        try:
-            payload = {
-                "url": target_url,
-                "downloadMode": "audio",
-                "audioFormat": "mp3"
-            }
-            c_res = requests.post(
-                c_srv,
-                json=payload,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0"
-                },
-                timeout=20
-            )
-            if c_res.status_code == 200:
-                data = c_res.json()
-                audio_link = data.get("url")
-                if audio_link:
-                    print(f"    Downloading from Cobalt tunnel ({c_srv})...")
-                    with requests.get(audio_link, stream=True, timeout=120) as a_dl:
-                        with open(temp_audio, "wb") as f:
-                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
-                                f.write(chunk)
-                    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-                        download_success = True
-                        break
-        except Exception:
-            continue
 
 # Step 3.1: Combine Cover Image + Audio into 1080p MP4
 if download_success:
