@@ -11,7 +11,6 @@ from googleapiclient.http import MediaFileUpload
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# OAuth Credentials
 CLIENT_ID = os.environ.get("YT_CLIENT_ID") or ("720341227533-" + "9g39h1lb810p6afohnnn7hbl7vsvvut5" + ".apps.googleusercontent.com")
 CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET") or ("GOCSPX-" + "09Wi-2SVRUsC45vMc1_F3lit17IW")
 REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN") or ("1//06a-LUV_GTjkWCgYIARAAGAYSNwF-" + "L9IrgfCDTBQCEGrOS9I7mIpUAfb-erKjbZWD1EZ209f0mw66R_AMU3wgr9M2Y9nLK_DGsNw")
@@ -77,7 +76,6 @@ title = "Audio Library Music Track"
 description = "Provided by Audio Library Automation.\n#music #audiolibrary"
 tags = ["music", "audio library", "no copyright music", "free music"]
 
-# 1. Exact Title via Public oEmbed
 try:
     oe_res = requests.get(f"https://noembed.com/embed?url={target_url}", timeout=15)
     if oe_res.status_code == 200:
@@ -87,7 +85,6 @@ try:
 except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
-# 2. Complete Description Extraction via YouTubei Web Client
 try:
     player_url = "https://www.youtube.com/youtubei/v1/player"
     payload = {
@@ -111,7 +108,6 @@ try:
 except Exception as e:
     print(f"[-] YouTubei Web player API notice: {e}")
 
-# Fallback Description via RSS
 if len(description) < 150 and rss_content:
     try:
         desc_matches = re.findall(r'<media:description>([\s\S]*?)</media:description>', rss_content)
@@ -134,7 +130,6 @@ for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
 
-# Download Cover Thumbnail
 thumb_url = f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg"
 th_res = requests.get(thumb_url, headers=headers, timeout=15)
 if th_res.status_code != 200:
@@ -144,84 +139,105 @@ if th_res.status_code != 200:
 with open(temp_thumb, "wb") as f:
     f.write(th_res.content)
 
-# Step 3: Track Audio Download Engine
+# Step 3: Multi-Tunnel Audio Downloader
 print("\nStep 3: Track stream download shuru...")
 
 download_success = False
 
-# Method 1: Description se direct MediaFire / Artist download link
-print("[+] Method 1: Description se official download links check ho rahe hain...")
+# Method 1: Official AudioLibrary.com.co Direct MP3 Resolver
+print("[+] Method 1: Searching AudioLibrary / MediaFire link...")
 urls_in_desc = re.findall(r'https?://[^\s<>"]+', description)
-clean_urls = [u.rstrip('\\').rstrip('.').rstrip(')').rstrip(';') for u in urls_in_desc]
-
-for link in clean_urls:
-    if any(k in link.lower() for k in ["mediafire.com", "bit.ly", "tinyurl"]):
+for link in urls_in_desc:
+    clean_link = link.rstrip('\\').rstrip('.').rstrip(')').rstrip(';')
+    if any(k in clean_link.lower() for k in ["audiolibrary.com.co", "mediafire.com"]):
         try:
-            head_res = requests.get(link, headers=headers, timeout=15, allow_redirects=True)
-            final_url = head_res.url
-            
-            if "mediafire.com" in final_url:
-                print(f"    MediaFire link mila: {final_url}")
-                mf_direct = re.search(r'aria-label="Download file"\s+href="([^"]+)"', head_res.text)
-                if not mf_direct:
-                    mf_direct = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', head_res.text)
-                if mf_direct:
-                    dl_url = mf_direct.group(1)
-                    if dl_url.startswith("//"):
-                        dl_url = "https:" + dl_url
-                    print("    Downloading MP3 from MediaFire...")
-                    with requests.get(dl_url, stream=True, timeout=120) as mf_dl:
+            r = requests.get(clean_link, headers=headers, timeout=15, allow_redirects=True)
+            # MediaFire match
+            mf = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', r.text)
+            if mf:
+                dl_url = mf.group(1)
+                if dl_url.startswith("//"): dl_url = "https:" + dl_url
+                print(f"    Direct MP3 found on MediaFire: {dl_url[:45]}...")
+                with requests.get(dl_url, stream=True, timeout=120) as mf_dl:
+                    with open(temp_audio, "wb") as f:
+                        for chunk in mf_dl.iter_content(chunk_size=1024 * 1024):
+                            f.write(chunk)
+                if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                    download_success = True
+                    break
+        except Exception:
+            continue
+
+# Method 2: Rapid MP3 Tunnel via Loader.to API
+if not download_success:
+    print("[+] Method 2: Testing Rapid MP3 Tunnel API...")
+    try:
+        init_url = f"https://loader.to/ajax/download.php?button=1&start=1&end=1&format=mp3&url={target_url}"
+        r_init = requests.get(init_url, headers=headers, timeout=15).json()
+        task_id = r_init.get("id")
+        if task_id:
+            print(f"    Tunnel task created (ID: {task_id}). Waiting for audio conversion...")
+            for _ in range(12):
+                time.sleep(3)
+                p_url = f"https://loader.to/ajax/progress.php?id={task_id}"
+                p_res = requests.get(p_url, headers=headers, timeout=15).json()
+                if p_res.get("success") == 1 and p_res.get("download_url"):
+                    audio_dl_url = p_res["download_url"]
+                    print("    Downloading converted MP3 stream...")
+                    with requests.get(audio_dl_url, stream=True, timeout=120) as a_stream:
                         with open(temp_audio, "wb") as f:
-                            for chunk in mf_dl.iter_content(chunk_size=1024 * 1024):
+                            for chunk in a_stream.iter_content(chunk_size=1024 * 1024):
                                 f.write(chunk)
                     if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
                         download_success = True
                         break
-        except Exception as l_err:
-            print(f"    [-] Link resolve notice: {l_err}")
+                elif p_res.get("text") == "Error":
+                    break
+    except Exception as e:
+        print(f"    [-] Rapid Tunnel notice: {e}")
 
-# Method 2: Piped / Invidious API Proxies (No Bot-Block on GitHub Actions)
+# Method 3: Invidious Public Instances (Rotated audio stream fallback)
 if not download_success:
-    print("[+] Method 2: Testing Piped/Invidious proxy streams...")
-    piped_apis = [
-        f"https://pipedapi.kavin.rocks/streams/{latest_video_id}",
-        f"https://api.piped.privacydev.net/streams/{latest_video_id}",
-        f"https://piped-api.lunar.icu/streams/{latest_video_id}"
+    print("[+] Method 3: Testing Invidious Instances...")
+    invidious_hosts = [
+        "https://inv.nadeko.net",
+        "https://invidious.nerdvpn.de",
+        "https://yewtu.be"
     ]
-    for p_api in piped_apis:
+    for host in invidious_hosts:
         try:
-            p_res = requests.get(p_api, headers=headers, timeout=12)
-            if p_res.status_code == 200:
-                audio_streams = p_res.json().get("audioStreams", [])
-                if audio_streams:
-                    # Select best quality audio stream
-                    best_stream = sorted(audio_streams, key=lambda x: x.get("bitrate", 0), reverse=True)[0]
-                    stream_url = best_stream.get("url")
+            api_endpoint = f"{host}/api/v1/videos/{latest_video_id}"
+            iv_res = requests.get(api_endpoint, headers=headers, timeout=10)
+            if iv_res.status_code == 200:
+                data = iv_res.json()
+                formats = data.get("adaptiveFormats", [])
+                audio_fmts = [f for f in formats if f.get("type", "").startswith("audio/")]
+                if audio_fmts:
+                    best_audio = sorted(audio_fmts, key=lambda x: int(x.get("bitrate", 0)), reverse=True)[0]
+                    stream_url = best_audio.get("url")
                     if stream_url:
-                        print(f"    Piped stream direct download: {best_stream.get('format', 'audio')} ({best_stream.get('bitrate', 0)} bps)...")
-                        dl_res = requests.get(stream_url, stream=True, timeout=120)
-                        raw_temp = "raw_stream_audio"
-                        with open(raw_temp, "wb") as f:
-                            for chunk in dl_res.iter_content(chunk_size=1024 * 1024):
-                                f.write(chunk)
+                        print(f"    Extracting audio via {host}...")
+                        raw_temp = "raw_stream.bin"
+                        with requests.get(stream_url, stream=True, timeout=120) as r_dl:
+                            with open(raw_temp, "wb") as f:
+                                for chunk in r_dl.iter_content(chunk_size=1024 * 1024):
+                                    f.write(chunk)
                         
-                        # Convert to standard MP3 via ffmpeg
                         subprocess.run([
                             "ffmpeg", "-y", "-i", raw_temp, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", temp_audio
                         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         
                         if os.path.exists(raw_temp):
                             os.remove(raw_temp)
-                            
                         if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
                             download_success = True
                             break
-        except Exception as p_err:
+        except Exception:
             continue
 
-# Method 3: yt-dlp Direct Stream (With cookies if present)
+# Method 4: yt-dlp with TV/IOS Client Bypass (agar cookies maujood hon ya JS bypass ho sake)
 if not download_success:
-    print("[+] Method 3: yt-dlp direct stream download...")
+    print("[+] Method 4: yt-dlp tv client fallback...")
     try:
         base_audio = temp_audio.rsplit('.', 1)[0]
         ytdl_cmd = [
@@ -231,23 +247,18 @@ if not download_success:
             "--audio-quality", "192K",
             "--force-overwrites",
             "--no-playlist",
+            "--extractor-args", "youtube:player_client=tv_embedded,ios",
             "-o", f"{base_audio}.%(ext)s",
             target_url
         ]
-
         if os.path.exists("cookies.txt"):
-            print("    [!] Using cookies.txt for authentication...")
             ytdl_cmd.extend(["--cookies", "cookies.txt"])
-
-        res = subprocess.run(ytdl_cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            print(f"    [-] yt-dlp notice: {res.stderr.strip()[:200]}")
-
+            
+        subprocess.run(ytdl_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-            print(f"    [+] yt-dlp audio extract complete: {os.path.getsize(temp_audio)} bytes")
             download_success = True
-    except Exception as yt_err:
-        print(f"    [-] yt-dlp execution error: {yt_err}")
+    except Exception:
+        pass
 
 # Step 3.1: Combine Cover Image + Audio into 1080p MP4
 if download_success:
@@ -298,12 +309,10 @@ new_id = upload_resp.get("id")
 print(f"\n[+] SUCCESS! Video Private Upload Ho Gayi.")
 print(f"Uploaded Video URL: https://www.youtube.com/watch?v={new_id}")
 
-# State Tracker update
 uploaded_ids.add(latest_video_id)
 with open(TRACKER_FILE, "w") as f:
     json.dump(list(uploaded_ids), f, indent=2)
 
-# Cleanup
 for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
