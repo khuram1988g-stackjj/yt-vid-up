@@ -47,9 +47,11 @@ headers = {
 
 channel_rss = "https://www.youtube.com/feeds/videos.xml?channel_id=UCht8qITGkBvXKsR1Byln-wA"
 video_ids = []
+rss_content = ""
 try:
     rss_resp = requests.get(channel_rss, headers=headers, timeout=20)
-    video_ids = re.findall(r'<yt:videoId>([a-zA-Z0-9_-]{11})</yt:videoId>', rss_resp.text)
+    rss_content = rss_resp.text
+    video_ids = re.findall(r'<yt:videoId>([a-zA-Z0-9_-]{11})</yt:videoId>', rss_content)
 except Exception as e:
     print(f"[-] RSS feed notice: {e}")
 
@@ -85,16 +87,15 @@ try:
 except Exception as e:
     print(f"[-] oEmbed notice: {e}")
 
-# 2. Full Description via Android Player API (Official Uncut YouTube Metadata)
+# 2. Complete Description Extraction via YouTubei Web Client
 try:
     player_url = "https://www.youtube.com/youtubei/v1/player"
     payload = {
         "videoId": latest_video_id,
         "context": {
             "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "19.09.37",
-                "androidSdkVersion": 30,
+                "clientName": "WEB",
+                "clientVersion": "2.20240501.00.00",
                 "hl": "en",
                 "gl": "US"
             }
@@ -102,24 +103,21 @@ try:
     }
     p_resp = requests.post(player_url, json=payload, headers=headers, timeout=20)
     if p_resp.status_code == 200:
-        p_data = p_resp.json()
-        v_details = p_data.get("videoDetails", {})
-        if v_details.get("shortDescription"):
+        v_details = p_resp.json().get("videoDetails", {})
+        if v_details.get("shortDescription") and len(v_details["shortDescription"]) > 100:
             description = v_details["shortDescription"]
         if v_details.get("keywords"):
             tags = v_details["keywords"]
 except Exception as e:
-    print(f"[-] Android player API notice: {e}")
+    print(f"[-] YouTubei Web player API notice: {e}")
 
-# Fallback: Agar API se na mile to web page parse karein
-if len(description) < 150:
+# Agar API se choti mile to RSS Description check karein
+if len(description) < 150 and rss_content:
     try:
-        vid_page = requests.get(target_url, headers=headers, timeout=25).text
-        desc_match = re.search(r'\"shortDescription\":\"(.*?)\"', vid_page)
-        if desc_match:
-            parsed_d = desc_match.group(1).encode('utf-8').decode('unicode-escape')
-            if len(parsed_d) > len(description):
-                description = parsed_d
+        # Match media:description from RSS feed
+        desc_matches = re.findall(r'<media:description>([\s\S]*?)</media:description>', rss_content)
+        if desc_matches and len(desc_matches[0]) > len(description):
+            description = desc_matches[0].strip()
     except Exception:
         pass
 
@@ -137,7 +135,7 @@ for f_path in [output_video, temp_audio, temp_thumb]:
     if os.path.exists(f_path):
         os.remove(f_path)
 
-# Download Cover Image
+# Download High-Resolution Cover Thumbnail
 thumb_url = f"https://i.ytimg.com/vi/{latest_video_id}/maxresdefault.jpg"
 th_res = requests.get(thumb_url, headers=headers, timeout=15)
 if th_res.status_code != 200:
@@ -152,7 +150,7 @@ print("\nStep 3: Track stream download shuru...")
 
 download_success = False
 
-# Method 1: Description mein mojood direct link (MediaFire, SoundCloud, etc.)
+# Method 1: Description se direct MediaFire / Artist download link
 print("[+] Method 1: Description se official artist download links check ho rahe hain...")
 urls_in_desc = re.findall(r'https?://[^\s<>"]+', description)
 clean_urls = [u.rstrip('\\').rstrip('.').rstrip(')').rstrip(';') for u in urls_in_desc]
@@ -181,57 +179,74 @@ for link in clean_urls:
                     if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
                         download_success = True
                         break
-
-            elif "soundcloud.com" in final_url and "/sets/" not in final_url:
-                print(f"    SoundCloud resolved: {final_url}")
-                sc_cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", temp_audio, final_url]
-                subprocess.run(sc_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-                    download_success = True
-                    break
         except Exception as l_err:
             print(f"    [-] Link resolve notice: {l_err}")
             continue
 
-# Method 2: Invidious Instances with local=true (Server Proxying)
+# Method 2: Public Proxy Audio Gateways (Direct Audio Tunnel)
 if not download_success:
-    print("[+] Method 2: Invidious Server-Proxied Audio Stream testing...")
-    invidious_mirrors = [
-        "https://yt.chocolatemoo53.com",
-        "https://inv.nadeko.net",
-        "https://invidious.nerdvpn.de",
-        "https://invidious.tiekoetter.com",
-        "https://yewtu.be"
+    print("[+] Method 2: High-speed audio tunnel resolvers...")
+    tunnel_gateways = [
+        f"https://api.vevioz.com/apis/single/mp3?url={target_url}",
+        f"https://backend.svdl.net/api/audio?url={target_url}"
     ]
-    for inst_url in invidious_mirrors:
+    for gw in tunnel_gateways:
         try:
-            print(f"    Checking mirror: {inst_url}")
-            api_endpoint = f"{inst_url}/api/v1/videos/{latest_video_id}"
-            inv_res = requests.get(api_endpoint, timeout=15, verify=False)
-            if inv_res.status_code == 200:
-                audio_formats = inv_res.json().get("adaptiveFormats", [])
-                stream_url = None
-                for af in audio_formats:
-                    if "audio" in af.get("type", ""):
-                        stream_url = af.get("url")
-                        break
-                
-                if stream_url:
-                    # Invidious local stream proxy URL banayein taake YouTube IP block na kare
-                    proxy_stream_url = f"{inst_url}/latest_version?id={latest_video_id}&itag=140&local=true"
-                    print("    Downloading audio stream via Invidious proxy...")
-                    with requests.get(proxy_stream_url, stream=True, timeout=120, verify=False) as a_dl:
-                        if a_dl.status_code == 200:
-                            with open(temp_audio, "wb") as f:
-                                for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
-                                    f.write(chunk)
-                    
+            gw_res = requests.get(gw, headers=headers, timeout=15, verify=False)
+            if gw_res.status_code == 200:
+                d_url = None
+                try:
+                    data = gw_res.json()
+                    d_url = data.get("url") or data.get("download_url") or data.get("link")
+                except Exception:
+                    pass
+                if d_url:
+                    print(f"    Direct audio stream found via tunnel! Downloading...")
+                    with requests.get(d_url, stream=True, timeout=120, verify=False) as a_dl:
+                        with open(temp_audio, "wb") as f:
+                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
+                                f.write(chunk)
                     if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
                         download_success = True
-                        print("[+] Invidious audio download kamyab!")
                         break
-        except Exception as e:
-            print(f"    [-] Mirror notice: {e}")
+        except Exception:
+            continue
+
+# Method 3: Cobalt Audio-Only Extractor (Tunnel Mode)
+if not download_success:
+    print("[+] Method 3: Testing Cobalt Audio Tunnel...")
+    cobalt_servers = [
+        "https://api.cobalt.tools",
+        "https://capi.oak.li",
+        "https://cobaltapi.canine.tools"
+    ]
+    for c_srv in cobalt_servers:
+        try:
+            payload = {
+                "url": target_url,
+                "downloadMode": "audio",
+                "audioFormat": "mp3",
+                "audioBitrate": "320"
+            }
+            c_res = requests.post(
+                c_srv,
+                json=payload,
+                headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+                timeout=20,
+                verify=False
+            )
+            if c_res.status_code == 200:
+                audio_link = c_res.json().get("url")
+                if audio_link:
+                    print(f"    Downloading audio from Cobalt tunnel ({c_srv})...")
+                    with requests.get(audio_link, stream=True, timeout=120, verify=False) as a_dl:
+                        with open(temp_audio, "wb") as f:
+                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
+                                f.write(chunk)
+                    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+                        download_success = True
+                        break
+        except Exception:
             continue
 
 # Step 3.1: Combine Cover Image + Audio into 1080p MP4
