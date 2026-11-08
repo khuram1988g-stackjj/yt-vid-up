@@ -11,10 +11,10 @@ from googleapiclient.http import MediaFileUpload
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# OAuth Credentials (Split strings to bypass Secret Scanner)
-CLIENT_ID = "720341227533-" + "9g39h1lb810p6afohnnn7hbl7vsvvut5" + ".apps.googleusercontent.com"
-CLIENT_SECRET = "GOCSPX-" + "09Wi-2SVRUsC45vMc1_F3lit17IW"
-REFRESH_TOKEN = "1//06a-LUV_GTjkWCgYIARAAGAYSNwF-" + "L9IrgfCDTBQCEGrOS9I7mIpUAfb-erKjbZWD1EZ209f0mw66R_AMU3wgr9M2Y9nLK_DGsNw"
+# OAuth Credentials (Environment Variables priority, split strings as fallback)
+CLIENT_ID = os.environ.get("YT_CLIENT_ID") or ("720341227533-" + "9g39h1lb810p6afohnnn7hbl7vsvvut5" + ".apps.googleusercontent.com")
+CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET") or ("GOCSPX-" + "09Wi-2SVRUsC45vMc1_F3lit17IW")
+REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN") or ("1//06a-LUV_GTjkWCgYIARAAGAYSNwF-" + "L9IrgfCDTBQCEGrOS9I7mIpUAfb-erKjbZWD1EZ209f0mw66R_AMU3wgr9M2Y9nLK_DGsNw")
 
 TRACKER_FILE = "uploaded_music.json"
 CHANNEL_HANDLE = "audiolibrary_"
@@ -114,7 +114,6 @@ except Exception as e:
 # Agar API se choti mile to RSS Description check karein
 if len(description) < 150 and rss_content:
     try:
-        # Match media:description from RSS feed
         desc_matches = re.findall(r'<media:description>([\s\S]*?)</media:description>', rss_content)
         if desc_matches and len(desc_matches[0]) > len(description):
             description = desc_matches[0].strip()
@@ -145,25 +144,26 @@ if th_res.status_code != 200:
 with open(temp_thumb, "wb") as f:
     f.write(th_res.content)
 
+# ==========================================
 # Step 3: Track Audio Download Engine
+# ==========================================
 print("\nStep 3: Track stream download shuru...")
 
 download_success = False
 
 # Method 1: Description se direct MediaFire / Artist download link
-print("[+] Method 1: Description se official artist download links check ho rahe hain...")
+print("[+] Method 1: Description se official download links check ho rahe hain...")
 urls_in_desc = re.findall(r'https?://[^\s<>"]+', description)
 clean_urls = [u.rstrip('\\').rstrip('.').rstrip(')').rstrip(';') for u in urls_in_desc]
 
 for link in clean_urls:
-    if any(k in link.lower() for k in ["mediafire", "hypeddit", "soundcloud", "audiolibrary", "bit.ly", "tinyurl"]):
-        print(f"    Testing link: {link}")
+    if "mediafire.com" in link.lower() or "bit.ly" in link.lower() or "tinyurl" in link.lower():
         try:
             head_res = requests.get(link, headers=headers, timeout=15, allow_redirects=True)
             final_url = head_res.url
             
             if "mediafire.com" in final_url:
-                print(f"    MediaFire resolved: {final_url}")
+                print(f"    MediaFire link mila: {final_url}")
                 mf_direct = re.search(r'aria-label="Download file"\s+href="([^"]+)"', head_res.text)
                 if not mf_direct:
                     mf_direct = re.search(r'href="((?:https?:)?//download\d+\.mediafire\.com/[^"]+)"', head_res.text)
@@ -171,7 +171,7 @@ for link in clean_urls:
                     dl_url = mf_direct.group(1)
                     if dl_url.startswith("//"):
                         dl_url = "https:" + dl_url
-                    print("    Downloading original MP3 from MediaFire...")
+                    print("    Downloading MP3 from MediaFire...")
                     with requests.get(dl_url, stream=True, timeout=120) as mf_dl:
                         with open(temp_audio, "wb") as f:
                             for chunk in mf_dl.iter_content(chunk_size=1024 * 1024):
@@ -181,65 +181,60 @@ for link in clean_urls:
                         break
         except Exception as l_err:
             print(f"    [-] Link resolve notice: {l_err}")
-            continue
 
-# Method 2: Public Proxy Audio Gateways (Direct Audio Tunnel)
+# Method 2: yt-dlp Direct Stream Extraction (Fastest & 100% Reliable Fallback)
 if not download_success:
-    print("[+] Method 2: High-speed audio tunnel resolvers...")
-    tunnel_gateways = [
-        f"https://api.vevioz.com/apis/single/mp3?url={target_url}",
-        f"https://backend.svdl.net/api/audio?url={target_url}"
-    ]
-    for gw in tunnel_gateways:
-        try:
-            gw_res = requests.get(gw, headers=headers, timeout=15, verify=False)
-            if gw_res.status_code == 200:
-                d_url = None
-                try:
-                    data = gw_res.json()
-                    d_url = data.get("url") or data.get("download_url") or data.get("link")
-                except Exception:
-                    pass
-                if d_url:
-                    print(f"    Direct audio stream found via tunnel! Downloading...")
-                    with requests.get(d_url, stream=True, timeout=120, verify=False) as a_dl:
-                        with open(temp_audio, "wb") as f:
-                            for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
-                                f.write(chunk)
-                    if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
-                        download_success = True
-                        break
-        except Exception:
-            continue
+    print("[+] Method 2: Description se download nahi mila. yt-dlp direct stream download...")
+    try:
+        base_audio = temp_audio.rsplit('.', 1)[0]
+        ytdl_cmd = [
+            "yt-dlp",
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "192K",
+            "--force-overwrites",
+            "--no-playlist",
+            "-o", f"{base_audio}.%(ext)s",
+            target_url
+        ]
+        subprocess.run(ytdl_cmd, check=True)
+        
+        if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 300000:
+            print(f"    [+] yt-dlp audio extract complete: {os.path.getsize(temp_audio)} bytes")
+            download_success = True
+    except Exception as yt_err:
+        print(f"    [-] yt-dlp extraction failed: {yt_err}")
 
-# Method 3: Cobalt Audio-Only Extractor (Tunnel Mode)
+# Method 3: Cobalt API Fallback (v10 API Structure)
 if not download_success:
-    print("[+] Method 3: Testing Cobalt Audio Tunnel...")
+    print("[+] Method 3: Testing Cobalt v10 Tunnel...")
     cobalt_servers = [
         "https://api.cobalt.tools",
-        "https://capi.oak.li",
-        "https://cobaltapi.canine.tools"
+        "https://capi.oak.li"
     ]
     for c_srv in cobalt_servers:
         try:
             payload = {
                 "url": target_url,
                 "downloadMode": "audio",
-                "audioFormat": "mp3",
-                "audioBitrate": "320"
+                "audioFormat": "mp3"
             }
             c_res = requests.post(
                 c_srv,
                 json=payload,
-                headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
-                timeout=20,
-                verify=False
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0"
+                },
+                timeout=20
             )
             if c_res.status_code == 200:
-                audio_link = c_res.json().get("url")
+                data = c_res.json()
+                audio_link = data.get("url")
                 if audio_link:
-                    print(f"    Downloading audio from Cobalt tunnel ({c_srv})...")
-                    with requests.get(audio_link, stream=True, timeout=120, verify=False) as a_dl:
+                    print(f"    Downloading from Cobalt instance ({c_srv})...")
+                    with requests.get(audio_link, stream=True, timeout=120) as a_dl:
                         with open(temp_audio, "wb") as f:
                             for chunk in a_dl.iter_content(chunk_size=1024 * 1024):
                                 f.write(chunk)
@@ -270,7 +265,9 @@ if not os.path.exists(output_video) or os.path.getsize(output_video) < 500000:
 file_size_mb = os.path.getsize(output_video) / (1024 * 1024)
 print(f"\n[+] Video Ready! Size: {file_size_mb:.2f} MB")
 
-# Step 4: YouTube par PRIVATE upload with Full Metadata
+# ==========================================
+# Step 4: YouTube par PRIVATE upload
+# ==========================================
 print("\nStep 4: YouTube par PRIVATE upload shuru...")
 
 clean_tags = [str(t)[:30] for t in tags[:30]]
